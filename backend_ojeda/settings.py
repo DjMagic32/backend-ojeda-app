@@ -9,6 +9,8 @@ https://docs.djangoproject.com/en/5.1/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.1/ref/settings/
 """
+import os
+
 
 from pathlib import Path
 from datetime import timedelta
@@ -26,7 +28,8 @@ SECRET_KEY = 'django-insecure-8a_h)l=(3^qv&ux^7mh#ckvfcy*1q0^55s3qmul*x25l8j*01+
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['0.0.0.0', 'localhost', '127.0.0.1']
+#ALLOWED_HOSTS = ['*']
 
 
 # Application definition
@@ -80,12 +83,25 @@ WSGI_APPLICATION = 'backend_ojeda.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
 
+
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': 'mydatabase',  # Mismo valor que en docker-compose.yml
+        'USER': 'myuser',       # Mismo valor que en docker-compose.yml
+        'PASSWORD': 'mypassword',  # Mismo valor que en docker-compose.yml
+        'HOST': 'db',           # Nombre del servicio del contenedor en docker-compose.yml
+        'PORT': 5432,           # Puerto por defecto de PostgreSQL
     }
 }
+
+
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.sqlite3',
+#         'NAME': BASE_DIR / 'db.sqlite3',
+#     }
+# }
 
 
 # Password validation
@@ -141,6 +157,15 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.1/howto/static-files/
 
+STATICFILES_DIRS = [
+    os.path.join(BASE_DIR, 'static'),  # Este es un directorio relativo a tu proyecto
+]
+
+# Directorio donde Django almacenará los archivos estáticos compilados
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+
+
+
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 
@@ -152,9 +177,9 @@ STATIC_URL = 'static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Esta configuración es solo para el entorno de desarrollo. No es necesario en producción.
-if DEBUG:
-    STATICFILES_DIRS = [
-        BASE_DIR / "static",  # Directorio donde se encuentran los archivos estáticos en tu proyecto
-    ]
-    STATICFILES_STORAGE = 'django.contrib.staticfiles.storage.StaticFilesStorage'
+# if DEBUG:
+#     STATICFILES_DIRS = [
+#         BASE_DIR / "static",  # Directorio donde se encuentran los archivos estáticos en tu proyecto
+#     ]
+#     STATICFILES_STORAGE = 'django.contrib.staticfiles.storage.StaticFilesStorage'
 
