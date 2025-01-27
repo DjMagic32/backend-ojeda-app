@@ -9,6 +9,7 @@ https://docs.djangoproject.com/en/5.1/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.1/ref/settings/
 """
+from decouple import config
 import os
 
 
@@ -84,16 +85,37 @@ WSGI_APPLICATION = 'backend_ojeda.wsgi.application'
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
 
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'mydatabase',  # Mismo valor que en docker-compose.yml
-        'USER': 'myuser',       # Mismo valor que en docker-compose.yml
-        'PASSWORD': 'mypassword',  # Mismo valor que en docker-compose.yml
-        'HOST': 'db',           # Nombre del servicio del contenedor en docker-compose.yml
-        'PORT': 5432,           # Puerto por defecto de PostgreSQL
+DB_ENGINE = config('DJANGO_DB_ENGINE', default='sqlite')
+
+if DB_ENGINE == 'postgresql':
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': config('POSTGRES_DB', default='mydatabase'),
+            'USER': config('POSTGRES_USER', default='myuser'),
+            'PASSWORD': config('POSTGRES_PASSWORD', default='mypassword'),
+            'HOST': config('POSTGRES_HOST', default='localhost'),
+            'PORT': config('POSTGRES_PORT', default=5432),
+        }
     }
-}
+else:  # Por defecto, usa SQLite
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / config('DJANGO_DB_NAME', default='db.sqlite3'),
+        }
+    }
+
+#DATABASES = {
+#    'default': {
+#        'ENGINE': 'django.db.backends.postgresql',
+#        'NAME': 'mydatabase',  # Mismo valor que en docker-compose.yml
+#        'USER': 'myuser',       # Mismo valor que en docker-compose.yml
+#        'PASSWORD': 'mypassword',  # Mismo valor que en docker-compose.yml
+#        'HOST': 'db',           # Nombre del servicio del contenedor en docker-compose.yml
+#        'PORT': 5432,           # Puerto por defecto de PostgreSQL
+#    }
+#}
 
 
 # DATABASES = {
