@@ -12,4 +12,6 @@ COPY . /code/
 RUN mkdir -p /code/static
 
 # Realizar las migraciones y el collectstatic automáticamente al iniciar
-CMD python manage.py migrate && python manage.py collectstatic --noinput && python manage.py runserver 0.0.0.0:8000
+CMD python manage.py collectstatic --noinput && python manage.py runserver 0.0.0.0:8000
+
+# python manage.py makemigrations store && python manage.py makemigrations && python manage.py migrate &&
