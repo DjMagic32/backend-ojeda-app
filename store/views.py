@@ -123,3 +123,41 @@ class WalletActionView(APIView):
         wallet.save()
         serializer = WalletSerializer(wallet)
         return Response(serializer.data, status=status.HTTP_200_OK)
+    
+class UsuarioDetalleView(APIView):
+    def post(self, request):
+        # Obtener el token del cuerpo de la solicitud (request.data)
+        token = request.data.get('token', None)
+        if not token:
+            return Response({'error': 'Token no proporcionado'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Autenticar el usuario usando el token
+        user = request.user  # Dado que estamos usando JWT, el usuario ya está autenticado
+
+        if not user:
+            return Response({'error': 'Usuario no encontrado'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Serializar la información del usuario
+        usuario_serializer = UsuarioSerializer(user)
+
+        # Eliminar la contraseña de los datos serializados
+        usuario_data = usuario_serializer.data
+        if 'password' in usuario_data:
+            del usuario_data['password']
+
+        # Verificar si el usuario es una tienda
+        tienda_data = None
+        if user.rol == Usuario.ES_TIENDA:
+            try:
+                tienda = Tienda.objects.get(usuario=user)
+                tienda_serializer = TiendaSerializer(tienda)
+                tienda_data = tienda_serializer.data
+            except Tienda.DoesNotExist:
+                return Response({'error': 'Tienda no encontrada'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Devolver los datos del usuario y, si es una tienda, también los de la tienda
+        response_data = usuario_data
+        if tienda_data:
+            response_data['tienda'] = tienda_data
+
+        return Response(response_data, status=status.HTTP_200_OK)

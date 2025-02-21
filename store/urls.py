@@ -4,7 +4,7 @@ from rest_framework_simplejwt.views import (
     TokenObtainPairView,
     TokenRefreshView,
 )
-from .views import UsuarioViewSet, TiendaViewSet, ProductoTiendaViewSet, CarritoView, PedidoView, CategoriaViewSet, ProductoViewSet, ComentarioViewSet, ComentarioProductoViewSet, ReferenciaViewSet, WalletViewSet, WalletActionView, CreateUserView
+from .views import UsuarioViewSet, TiendaViewSet, ProductoTiendaViewSet, CarritoView, PedidoView, CategoriaViewSet, ProductoViewSet, ComentarioViewSet, ComentarioProductoViewSet, ReferenciaViewSet, WalletViewSet, WalletActionView, CreateUserView, UsuarioDetalleView
 
 router = DefaultRouter()
 router.register(r'usuarios', UsuarioViewSet)
@@ -23,4 +23,5 @@ urlpatterns = [
     path('carrito/', CarritoView.as_view(), name='carrito'),
     path('pedidos/', PedidoView.as_view(), name='pedidos'),
     path('wallet-action/', WalletActionView.as_view(), name='wallet-action'),
+    path('usuario-detalle/', UsuarioDetalleView.as_view(), name='usuario-detalle'),
 ]
