@@ -175,33 +175,12 @@ USE_I18N = True
 
 USE_TZ = True
 
-
-# Static files (CSS, JavaScript, Images)
-# https://docs.djangoproject.com/en/5.1/howto/static-files/
-
 STATICFILES_DIRS = [
-    os.path.join(BASE_DIR, 'static'),  # Este es un directorio relativo a tu proyecto
+    BASE_DIR / 'static',
 ]
-
-# Directorio donde Django almacenará los archivos estáticos compilados
-STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
-
-
 
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
-
 STATIC_URL = 'static/'
 
-# Default primary key field type
-# https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
-
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
-
-# Esta configuración es solo para el entorno de desarrollo. No es necesario en producción.
-# if DEBUG:
-#     STATICFILES_DIRS = [
-#         BASE_DIR / "static",  # Directorio donde se encuentran los archivos estáticos en tu proyecto
-#     ]
-#     STATICFILES_STORAGE = 'django.contrib.staticfiles.storage.StaticFilesStorage'
-
