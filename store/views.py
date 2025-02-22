@@ -7,14 +7,54 @@ from .serializers import ProductoSerializer, CategoriaSerializer, CarritoSeriali
 from .permissions import EsTienda
 
 class CreateUserView(APIView):
-    permission_classes = [permissions.AllowAny]  # Permitir acceso sin necesidad de token
+    permission_classes = [permissions.AllowAny]  # Permitir acceso sin token
 
     def post(self, request, *args, **kwargs):
-        serializer = UsuarioSerializer(data=request.data)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        data = request.data.copy()  # Creamos una copia de los datos del request
+        email = data.get('email', '').strip().lower()  # Convertimos el email a minúsculas
+
+        # Verificamos si el email ya está en uso
+        if Usuario.objects.filter(email=email).exists():
+            return Response({'error': 'El correo ya está en uso.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        data['email'] = email  # Guardamos el email en minúsculas
+        data['username'] = email  # Usamos el email como username
+
+        # Creamos el usuario manualmente sin guardarlo aún
+        usuario = Usuario(
+            email=email,
+            username=email,
+            first_name=data.get('nombre', ''),  # Corregimos el nombre
+            last_name=data.get('apellido', ''),  # Corregimos el apellido
+            rol=data.get('rol', Usuario.ES_CLIENTE),  # Valor por defecto
+            telefono=data.get('telefono', ''),  # Agregamos el teléfono
+            genero=data.get('genero', None),  # Agregamos el género
+            edad=data.get('edad', None),  # Agregamos la edad
+            cedula_pasaporte=data.get('cedula_pasaporte', None),  # Agregamos la cédula/pasaporte
+        )
+        usuario.set_password(data['password'])  # Hasheamos la contraseña
+        usuario.save()  # Guardamos el usuario en la base de datos
+
+        # Si el usuario es de tipo TIENDA, creamos también la tienda
+        if usuario.rol == Usuario.ES_TIENDA:
+            tienda_data = {
+                'usuario': usuario.id,
+                'nombre': data.get('nombre_tienda', ''),
+                'direccion': data.get('direccion', ''),
+                'telefono': data.get('telefono_tienda', ''),
+                'informacion_fiscal': data.get('informacion_fiscal', ''),
+            }
+            tienda_serializer = TiendaSerializer(data=tienda_data)
+            if tienda_serializer.is_valid():
+                tienda_serializer.save()
+            else:
+                usuario.delete()  # Eliminamos el usuario si la tienda falla
+                return Response(tienda_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        # Serializamos el usuario ya creado para devolverlo en la respuesta
+        usuario_serializer = UsuarioSerializer(usuario)
+        return Response(usuario_serializer.data, status=status.HTTP_201_CREATED)
+    
 
 class UsuarioViewSet(viewsets.ModelViewSet):
     #permission_classes = [IsAuthenticated]
