@@ -2,6 +2,8 @@ from django.db import models
 from django.contrib.auth.models import AbstractUser
 
 class Usuario(AbstractUser):
+    USERNAME_FIELD = 'email'
+    REQUIRED_FIELDS = ['username'] 
     ES_TIENDA = 'TIENDA'
     ES_CLIENTE = 'CLIENTE'
     ROLES = [
@@ -17,7 +19,7 @@ class Usuario(AbstractUser):
         (GENERO_FEMENINO, 'Femenino'),
         (GENERO_OTRO, 'Otro'),
     ]
-
+    email = models.EmailField(unique=True)
     rol = models.CharField(max_length=10, choices=ROLES, default=ES_CLIENTE)
     edad = models.PositiveIntegerField(blank=True, null=True)
     genero = models.CharField(max_length=1, choices=GENEROS, blank=True, null=True)
