@@ -43,6 +43,11 @@ class Tienda(models.Model):
     def __str__(self):
         return self.nombre
 
+# Represents a product as offered or managed by a specific Tienda.
+# Stores manage their inventory/offerings through this model.
+# TODO: Review for potential redundancy with the Producto model or for a
+# clearer linkage if this represents a store's specific stock/offering
+# of a generic Producto from a central catalog.
 class ProductoTienda(models.Model):
     tienda = models.ForeignKey(Tienda, on_delete=models.CASCADE, related_name='productos')
     nombre = models.CharField(max_length=200)
@@ -90,6 +95,8 @@ class Categoria(models.Model):
     def __str__(self):
         return self.nombre
 
+# Represents a generic product available in the marketplace,
+# linked to categories and directly added to customer carts.
 class Producto(models.Model):
     nombre = models.CharField(max_length=200)
     descripcion = models.TextField()
