@@ -2,7 +2,7 @@
 set -e  # si algo falla, la imagen no arranca
 
 echo "⏳ Generando migraciones necesarias…"
-python manage.py makemigrations usuarios  # tu app de usuario
+python manage.py makemigrations store  # tu app de usuario
 python manage.py makemigrations           # el resto
 python manage.py migrate --noinput
 
