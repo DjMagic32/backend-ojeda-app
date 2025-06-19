@@ -27,3 +27,4 @@ echo "⏳ Recolectando archivos estáticos…"
 python manage.py collectstatic --noinput
 
 echo "🚀 Arrancando servidor…"
+exec "$@"
