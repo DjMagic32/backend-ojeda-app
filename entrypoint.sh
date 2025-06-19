@@ -27,4 +27,3 @@ echo "⏳ Recolectando archivos estáticos…"
 python manage.py collectstatic --noinput
 
 echo "🚀 Arrancando servidor…"
-exec gunicorn tu_proyecto.wsgi:application --bind 0.0.0.0:8000
