@@ -48,6 +48,7 @@ INSTALLED_APPS = [
     'rest_framework_simplejwt',
     'rest_framework',
     'store',
+    'graphene_django',
 ]
 
 MIDDLEWARE = [
@@ -184,3 +185,7 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 STATIC_URL = 'static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+GRAPHENE = {
+    'SCHEMA': 'backend_ojeda.schema.schema'
+}

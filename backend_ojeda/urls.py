@@ -5,6 +5,9 @@ from rest_framework_swagger.views import get_swagger_view
 from drf_yasg.views import get_schema_view
 from drf_yasg import openapi
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
+from graphene_django.views import GraphQLView
+from django.views.decorators.csrf import csrf_exempt
+from .schema import schema as gql_schema # Renamed to avoid conflict if 'schema_view' is used differently
 from .views import CustomTokenObtainPairView
 
 
@@ -25,5 +28,7 @@ urlpatterns = [
     path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     # Ruta para Swagger
     path('swagger/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
-    path('schema/', SpectacularAPIView.as_view(), name='schema'),
+    path('schema/', SpectacularAPIView.as_view(), name='schema'), # This is for DRF Spectacular
+    # GraphQL endpoint
+    path("graphql", csrf_exempt(GraphQLView.as_view(graphiql=True, schema=gql_schema))),
 ]
