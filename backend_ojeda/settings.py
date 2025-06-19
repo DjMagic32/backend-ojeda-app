@@ -29,8 +29,27 @@ SECRET_KEY = 'django-insecure-8a_h)l=(3^qv&ux^7mh#ckvfcy*1q0^55s3qmul*x25l8j*01+
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['0.0.0.0', 'localhost', '127.0.0.1', "*"]
-#ALLOWED_HOSTS = ['*']
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+SECURE_SSL_REDIRECT = True
+SESSION_COOKIE_SECURE = True
+CSRF_COOKIE_SECURE = True
+
+ALLOWED_HOSTS = [
+    '0.0.0.0', 
+    'localhost',
+    '127.0.0.1',
+    "backend-ojeda-app.onrender.com",
+    ".onrender.com",
+    "localhost", "127.0.0.1",
+    "*"
+    ]
+
+CSRF_TRUSTED_ORIGINS = [
+    "https://backend-ojeda-app.onrender.com",
+    "https://*.onrender.com",
+    "*"
+]
 
 
 # Application definition
