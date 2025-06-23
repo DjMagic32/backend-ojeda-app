@@ -31,4 +31,5 @@ urlpatterns = [
     path('schema/', SpectacularAPIView.as_view(), name='schema'), # This is for DRF Spectacular
     # GraphQL endpoint
     path("graphql", csrf_exempt(GraphQLView.as_view(graphiql=True, schema=gql_schema))),
+    path('accounts/', include('allauth.urls')),
 ]
