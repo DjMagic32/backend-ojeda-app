@@ -43,3 +43,12 @@ threadpoolctl==3.5.0
 tzdata==2024.2
 uritemplate==4.1.1
 urllib3==2.3.0
+django-allauth==0.61.1
+dj-rest-auth==5.0.2 # Upgrading to a more recent version for better allauth compatibility
+stripe==8.5.0
+# Using a version that's likely compatible with current Django/Python
+# Check for latest stable version if setting up a new project
+python-binance==1.0.19 # For Binance API interactions
+channels==4.0.0 # For WebSocket support
+daphne==4.1.2 # ASGI server for Channels
+drf-nested-routers==0.93.4 # For nested API routes (e.g., room messages)

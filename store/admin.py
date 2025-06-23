@@ -73,9 +73,9 @@ class WalletAdmin(admin.ModelAdmin):
     list_filter = ('actualizado',)
 
 class PedidoAdmin(admin.ModelAdmin):
-    list_display = ('usuario', 'tienda', 'total', 'creado', 'pagado')
-    search_fields = ('usuario__username', 'tienda__nombre')
-    list_filter = ('creado', 'pagado')
+    list_display = ('usuario', 'tienda', 'total', 'creado', 'estado_pago', 'payment_intent_id', 'binance_order_id')
+    search_fields = ('usuario__username', 'tienda__nombre', 'payment_intent_id', 'binance_order_id')
+    list_filter = ('creado', 'estado_pago')
     change_list_template = "admin/analytics_change_list.html"
 
     def get_urls(self):

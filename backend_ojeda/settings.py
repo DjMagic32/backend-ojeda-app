@@ -54,6 +54,7 @@ CSRF_TRUSTED_ORIGINS = [
 # Application definition
 
 INSTALLED_APPS = [
+    'daphne',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -67,7 +68,58 @@ INSTALLED_APPS = [
     'rest_framework',
     'store',
     'graphene_django',
+    'allauth',
+    'allauth.account',
+    'allauth.socialaccount',
+    'allauth.socialaccount.providers.google',
+    'allauth.socialaccount.providers.apple',
+    'dj_rest_auth',
+    'dj_rest_auth.registration',
+    'channels',
 ]
+
+AUTHENTICATION_BACKENDS = (
+    'django.contrib.auth.backends.ModelBackend',
+    'allauth.account.auth_backends.AuthenticationBackend',
+)
+
+SITE_ID = 1
+
+ACCOUNT_AUTHENTICATION_METHOD = 'email'
+ACCOUNT_EMAIL_REQUIRED = True
+ACCOUNT_UNIQUE_EMAIL = True
+ACCOUNT_USER_MODEL_USERNAME_FIELD = None
+ACCOUNT_USERNAME_REQUIRED = False
+ACCOUNT_EMAIL_VERIFICATION = 'none' # Can be set to 'mandatory' or 'optional'
+
+SOCIALACCOUNT_PROVIDERS = {
+    'google': {
+        'SCOPE': [
+            'profile',
+            'email',
+        ],
+        'AUTH_PARAMS': {
+            'access_type': 'online',
+        }
+    },
+    'apple': {
+        'SCOPE': [
+            'name',
+            'email'
+        ],
+        'LOGIN_PARAMS': { # Optional: Custom parameters for the authorization URL
+            'response_mode': 'form_post', # Or 'fragment' or 'query'
+        },
+        # You will need to configure your Apple App ID, Services ID, Team ID, Key ID, and private key
+        # 'APP': {
+        #    'client_id': 'your.service.id', # Services ID
+        #    'secret': 'YOUR_APPLE_PRIVATE_KEY_CONTENT_HERE', # Content of your .p8 key file
+        #    'key': 'YOUR_APPLE_KEY_ID', # Key ID
+        #    'certificate_key': None, # Or path to your .pem certificate if not using .p8
+        #    'team_id': 'YOUR_APPLE_TEAM_ID'
+        # }
+    }
+}
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
@@ -75,6 +127,7 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'allauth.account.middleware.AccountMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
@@ -178,6 +231,13 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.IsAuthenticated',
     ],
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+    'USE_JWT': True, # dj-rest-auth uses JWTs for authentication
+}
+
+REST_AUTH = {
+    'USE_JWT': True,
+    'JWT_AUTH_HTTPONLY': False, # Allow JWT to be accessed by JavaScript
+    'TOKEN_MODEL': None, # We are using JWTs, not DRF's Token model via dj_rest_auth
 }
 
 AUTH_USER_MODEL = 'store.Usuario'  # Asegúrate de que esto esté configurado
@@ -207,3 +267,17 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 GRAPHENE = {
     'SCHEMA': 'backend_ojeda.schema.schema'
 }
+
+ASGI_APPLICATION = 'backend_ojeda.asgi.application'
+
+# Stripe API Keys
+STRIPE_PUBLISHABLE_KEY = config('STRIPE_PUBLISHABLE_KEY', default='your_stripe_publishable_key')
+STRIPE_SECRET_KEY = config('STRIPE_SECRET_KEY', default='your_stripe_secret_key')
+STRIPE_WEBHOOK_SECRET = config('STRIPE_WEBHOOK_SECRET', default='your_stripe_webhook_secret') # For webhook verification
+
+# Binance API Keys (ensure these are for Binance Pay, not trading, if different)
+BINANCE_API_KEY = config('BINANCE_API_KEY', default='your_binance_api_key')
+BINANCE_SECRET_KEY = config('BINANCE_SECRET_KEY', default='your_binance_secret_key')
+# Depending on the Binance Pay API, you might need a merchant ID or other specific configs
+BINANCE_MERCHANT_ID = config('BINANCE_MERCHANT_ID', default='your_binance_merchant_id')
+BINANCE_PAY_BASE_URL = config('BINANCE_PAY_BASE_URL', default='https://bpay.binanceapi.com') # Example, verify actual
