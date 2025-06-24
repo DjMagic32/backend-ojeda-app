@@ -6,9 +6,11 @@ class Usuario(AbstractUser):
     REQUIRED_FIELDS = ['username'] 
     ES_TIENDA = 'TIENDA'
     ES_CLIENTE = 'CLIENTE'
+    ES_CONDUCTOR = 'CONDUCTOR'  # New role for Driver
     ROLES = [
         (ES_TIENDA, 'Tienda'),
         (ES_CLIENTE, 'Cliente'),
+        (ES_CONDUCTOR, 'Conductor'),
     ]
 
     GENERO_MASCULINO = 'M'

@@ -5,10 +5,10 @@ from rest_framework_swagger.views import get_swagger_view
 from drf_yasg.views import get_schema_view
 from drf_yasg import openapi
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
-from graphene_django.views import GraphQLView
+from graphene_django.views import GraphQLView # Keep for original reference if needed
 from django.views.decorators.csrf import csrf_exempt
-from .schema import schema as gql_schema # Renamed to avoid conflict if 'schema_view' is used differently
-from .views import CustomTokenObtainPairView
+from .schema import schema as gql_schema
+from .views import CustomTokenObtainPairView, DRFAuthenticatedGraphQLView # Import custom view
 
 
 
@@ -22,6 +22,8 @@ schema_view = get_swagger_view(title='API Documentation')
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/store/', include('store.urls')),  # Aquí asegúrate de que la ruta sea correcta
+    path('api/taxi/', include('taxi.urls')),   # Rutas de la app 'taxi'
+    # path('api/delivery/', include('delivery.urls')), # TODO: Add delivery urls when ready
     # JWT token endpoints
     path('api/token/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
     #path('api/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
@@ -30,6 +32,6 @@ urlpatterns = [
     path('swagger/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
     path('schema/', SpectacularAPIView.as_view(), name='schema'), # This is for DRF Spectacular
     # GraphQL endpoint
-    path("graphql", csrf_exempt(GraphQLView.as_view(graphiql=True, schema=gql_schema))),
+    path("graphql", csrf_exempt(DRFAuthenticatedGraphQLView.as_view(graphiql=True, schema=gql_schema)), name='graphql'),
     path('accounts/', include('allauth.urls')),
 ]

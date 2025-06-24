@@ -2,10 +2,12 @@ import json
 from django.test import TestCase
 from django.urls import reverse
 from graphene_django.utils.testing import GraphQLTestCase
+from django.test import override_settings # Import override_settings
 from backend_ojeda.schema import schema # Main schema
 from .models import Usuario, Categoria # Import models needed for testing
 from rest_framework_simplejwt.tokens import RefreshToken
 
+@override_settings(SECURE_SSL_REDIRECT=False) # Override for this test class
 class GraphQLAPITestCase(GraphQLTestCase):
     GRAPHQL_SCHEMA = schema
     # Attempt to reverse the 'graphql' URL name.
@@ -31,8 +33,14 @@ class GraphQLAPITestCase(GraphQLTestCase):
             }
             '''
         )
-        self.assertResponseNoErrors(response)
-        content = json.loads(response.content)
+        try:
+            self.assertResponseNoErrors(response)
+            content = json.loads(response.content)
+        except json.JSONDecodeError as e:
+            print("JSONDecodeError in test_query_all_categorias:")
+            print("Response status code:", response.status_code)
+            print("Response content:", response.content)
+            raise e
         # Add assertions to check the content, e.g., number of categories, names, etc.
         self.assertEqual(len(content['data']['allCategorias']), 1)
         self.assertEqual(content['data']['allCategorias'][0]['nombre'], "Electronics")
@@ -56,7 +64,7 @@ class GraphQLAPITestCase(GraphQLTestCase):
         # Obtain JWT token for the test user
         refresh = RefreshToken.for_user(self.test_user)
         auth_headers = {
-            'HTTP_AUTHORIZATION': f'Bearer {str(refresh.access_token)}',
+            'Authorization': f'Bearer {str(refresh.access_token)}', # Changed HTTP_AUTHORIZATION to Authorization
         }
 
         response = self.query(
@@ -111,7 +119,7 @@ class GraphQLAPITestCase(GraphQLTestCase):
               }
             }
             ''',
-            op_name='CreateUser',
+            operation_name='CreateUser',
             variables={'input': {'email': 'newuser@example.com', 'username': 'newuser', 'password': 'password123', 'rol': 'CLIENTE'}}
         )
         self.assertResponseNoErrors(response)
