@@ -38,6 +38,9 @@ Antes de comenzar, asegúrate de tener las siguientes herramientas instaladas en
 
    ```bash
    docker-compose up -d
+   docker compose up -d
+   docker compose ps
+   docker compose logs -f web
    ```
 
    Este comando arrancará los contenedores en segundo plano (`-d` significa "detached"). Puedes verificar que están corriendo con:
