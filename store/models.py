@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.db import models
 from django.contrib.auth.models import AbstractUser
 
@@ -44,14 +46,54 @@ class Tienda(models.Model):
         return self.nombre
 
 class ProductoTienda(models.Model):
+    TIPO_PRODUCTO = 'PRODUCTO'
+    TIPO_SERVICIO = 'SERVICIO'
+    TIPOS = [
+        (TIPO_PRODUCTO, 'Producto'),
+        (TIPO_SERVICIO, 'Servicio'),
+    ]
+
     tienda = models.ForeignKey(Tienda, on_delete=models.CASCADE, related_name='productos')
     nombre = models.CharField(max_length=200)
     descripcion = models.TextField()
     precio = models.DecimalField(max_digits=10, decimal_places=2)
-    stock = models.PositiveIntegerField()
+    stock = models.PositiveIntegerField(blank=True, null=True)
+    tipo = models.CharField(max_length=15, choices=TIPOS, default=TIPO_PRODUCTO)
+    imagen = models.ImageField(upload_to='productos_tienda/', blank=True, null=True)
 
     def __str__(self):
-        return f"{self.nombre} - {self.tienda.nombre}"
+        return f"{self.nombre} - {self.tienda.nombre} ({self.tipo})"
+
+
+class StoreOrder(models.Model):
+    ESTADO_PENDIENTE = 'pending'
+    ESTADO_EN_CURSO = 'ongoing'
+    ESTADO_COMPLETADO = 'completed'
+    ESTADO_CANCELADO = 'cancelled'
+
+    ESTADOS = [
+        (ESTADO_PENDIENTE, 'Pendiente'),
+        (ESTADO_EN_CURSO, 'En curso'),
+        (ESTADO_COMPLETADO, 'Completado'),
+        (ESTADO_CANCELADO, 'Cancelado'),
+    ]
+
+    usuario = models.ForeignKey(Usuario, on_delete=models.CASCADE, related_name='store_orders')
+    producto = models.ForeignKey(ProductoTienda, on_delete=models.CASCADE, related_name='orders')
+    cantidad = models.PositiveIntegerField(default=1)
+    precio_unitario = models.DecimalField(max_digits=10, decimal_places=2)
+    total = models.DecimalField(max_digits=12, decimal_places=2)
+    estado = models.CharField(max_length=20, choices=ESTADOS, default=ESTADO_PENDIENTE)
+    direccion_entrega = models.CharField(max_length=255, blank=True, null=True)
+    notas = models.TextField(blank=True, null=True)
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-creado']
+
+    def __str__(self):
+        return f"Orden #{self.id} - {self.usuario.email} -> {self.producto.nombre}"
 
 class Carrito(models.Model):
     usuario = models.OneToOneField(Usuario, on_delete=models.CASCADE)
@@ -69,7 +111,7 @@ class ItemCarrito(models.Model):
         return f"{self.cantidad} x {self.producto.nombre}"
 
     @property
-    def subtotal(self):
+    def subtotal(self) -> Decimal:
         return self.cantidad * self.producto.precio
 
 class Pedido(models.Model):

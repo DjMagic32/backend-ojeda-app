@@ -4,9 +4,9 @@ db.sqlite3
 # Ignorar la carpeta de archivos estáticos generados
 staticfiles/
 
-# Ignorar migraciones (opcional, si quieres evitar rastrear archivos de migración)
-**/migrations/*.py
-**/migrations/*.pyc
+# Archivos subidos por usuarios
+media/
+
 
 # Ignorar configuraciones de entorno virtual (por si usas uno)
 venv/
@@ -17,9 +17,6 @@ env/
 .DS_Store
 Thumbs.db
 
-
-# Ignorar todas las carpetas llamadas migrations y su contenido
-**/migrations/
 
 # Ignorar todas las carpetas llamadas __pycache__ y su contenido
 **/__pycache__/

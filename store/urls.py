@@ -4,12 +4,29 @@ from rest_framework_simplejwt.views import (
     TokenObtainPairView,
     TokenRefreshView,
 )
-from .views import UsuarioViewSet, TiendaViewSet, ProductoTiendaViewSet, CarritoView, PedidoView, CategoriaViewSet, ProductoViewSet, ComentarioViewSet, ComentarioProductoViewSet, ReferenciaViewSet, WalletViewSet, WalletActionView, CreateUserView, UsuarioDetalleView
+from .views import (
+    UsuarioViewSet,
+    TiendaViewSet,
+    ProductoTiendaViewSet,
+    CarritoView,
+    PedidoView,
+    CategoriaViewSet,
+    ProductoViewSet,
+    ComentarioViewSet,
+    ComentarioProductoViewSet,
+    ReferenciaViewSet,
+    WalletViewSet,
+    WalletActionView,
+    CreateUserView,
+    UsuarioDetalleView,
+    StoreOrderViewSet,
+)
 
 router = DefaultRouter()
 router.register(r'usuarios', UsuarioViewSet)
 router.register(r'tiendas', TiendaViewSet)
 router.register(r'productos-tienda', ProductoTiendaViewSet)
+router.register(r'store-orders', StoreOrderViewSet, basename='store-orders')
 router.register(r'categorias', CategoriaViewSet)
 router.register(r'productos', ProductoViewSet)
 router.register(r'comentarios', ComentarioViewSet)

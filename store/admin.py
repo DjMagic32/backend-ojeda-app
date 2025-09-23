@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.urls import path
 from django.http import HttpResponse, HttpResponseRedirect
 import csv
-from .models import Usuario, Tienda, ProductoTienda, Carrito, ItemCarrito, Pedido, Categoria, Producto, Comentario, ComentarioProducto, Referencia, Wallet
+from .models import Usuario, Tienda, ProductoTienda, Carrito, ItemCarrito, Pedido, Categoria, Producto, Comentario, ComentarioProducto, Referencia, Wallet, StoreOrder
 from .analytics.predicciones import realizar_predicciones
 from django.contrib import messages
 
@@ -128,3 +128,10 @@ class PedidoAdmin(admin.ModelAdmin):
 
 
 admin.site.register(Pedido, PedidoAdmin)
+
+
+@admin.register(StoreOrder)
+class StoreOrderAdmin(admin.ModelAdmin):
+    list_display = ('id', 'usuario', 'producto', 'cantidad', 'estado', 'creado')
+    search_fields = ('usuario__username', 'producto__nombre')
+    list_filter = ('estado', 'creado')
