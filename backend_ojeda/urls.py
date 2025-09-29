@@ -8,6 +8,8 @@ from drf_yasg.views import get_schema_view
 from drf_yasg import openapi
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 from .views import CustomTokenObtainPairView
+from .graphql import JWTGraphQLView
+from .schema import schema
 
 
 
@@ -28,6 +30,7 @@ urlpatterns = [
     # Ruta para Swagger
     path('swagger/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
     path('schema/', SpectacularAPIView.as_view(), name='schema'),
+    path('api/graphql/', JWTGraphQLView.as_view(schema=schema), name='graphql'),
 ]
 
 if settings.DEBUG:

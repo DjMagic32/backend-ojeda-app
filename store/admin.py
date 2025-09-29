@@ -2,7 +2,23 @@ from django.contrib import admin
 from django.urls import path
 from django.http import HttpResponse, HttpResponseRedirect
 import csv
-from .models import Usuario, Tienda, ProductoTienda, Carrito, ItemCarrito, Pedido, Categoria, Producto, Comentario, ComentarioProducto, Referencia, Wallet, StoreOrder
+from .models import (
+    Carrito,
+    Categoria,
+    Comentario,
+    ComentarioProducto,
+    ItemCarrito,
+    Pedido,
+    Producto,
+    ProductoTienda,
+    Referencia,
+    StoreOrder,
+    StoreOrderReview,
+    StoreOrderSellerReview,
+    Tienda,
+    Usuario,
+    Wallet,
+)
 from .analytics.predicciones import realizar_predicciones
 from django.contrib import messages
 
@@ -135,3 +151,17 @@ class StoreOrderAdmin(admin.ModelAdmin):
     list_display = ('id', 'usuario', 'producto', 'cantidad', 'estado', 'creado')
     search_fields = ('usuario__username', 'producto__nombre')
     list_filter = ('estado', 'creado')
+
+
+@admin.register(StoreOrderReview)
+class StoreOrderReviewAdmin(admin.ModelAdmin):
+    list_display = ('id', 'order', 'producto', 'usuario', 'rating', 'creado')
+    search_fields = ('producto__nombre', 'usuario__username', 'order__id')
+    list_filter = ('rating', 'creado')
+
+
+@admin.register(StoreOrderSellerReview)
+class StoreOrderSellerReviewAdmin(admin.ModelAdmin):
+    list_display = ('id', 'order', 'tienda', 'comprador', 'rating', 'creado')
+    search_fields = ('tienda__nombre', 'comprador__username', 'order__id')
+    list_filter = ('rating', 'creado')

@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'graphene_django',
     'drf_spectacular',
     'drf_yasg',
     'rest_framework_swagger',
@@ -162,6 +163,11 @@ REST_FRAMEWORK = {
 }
 
 AUTH_USER_MODEL = 'store.Usuario'  # Asegúrate de que esto esté configurado
+
+
+GRAPHENE = {
+    'SCHEMA': 'backend_ojeda.schema.schema',
+}
 
 
 # Internationalization

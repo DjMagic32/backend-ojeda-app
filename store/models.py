@@ -1,7 +1,8 @@
 from decimal import Decimal
 
-from django.db import models
 from django.contrib.auth.models import AbstractUser
+from django.core.validators import MaxValueValidator, MinValueValidator
+from django.db import models
 
 class Usuario(AbstractUser):
     USERNAME_FIELD = 'email'
@@ -94,6 +95,66 @@ class StoreOrder(models.Model):
 
     def __str__(self):
         return f"Orden #{self.id} - {self.usuario.email} -> {self.producto.nombre}"
+
+
+class StoreOrderReview(models.Model):
+    order = models.OneToOneField(
+        StoreOrder,
+        on_delete=models.CASCADE,
+        related_name='review',
+    )
+    producto = models.ForeignKey(
+        ProductoTienda,
+        on_delete=models.CASCADE,
+        related_name='reviews',
+    )
+    usuario = models.ForeignKey(
+        Usuario,
+        on_delete=models.CASCADE,
+        related_name='store_order_reviews',
+    )
+    rating = models.PositiveSmallIntegerField(
+        validators=[MinValueValidator(1), MaxValueValidator(5)],
+    )
+    comentario = models.TextField(blank=True, null=True)
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-creado']
+
+    def __str__(self):
+        return f"Reseña #{self.id} - Orden {self.order_id} ({self.rating} estrellas)"
+
+
+class StoreOrderSellerReview(models.Model):
+    order = models.OneToOneField(
+        StoreOrder,
+        on_delete=models.CASCADE,
+        related_name='seller_review',
+    )
+    tienda = models.ForeignKey(
+        Tienda,
+        on_delete=models.CASCADE,
+        related_name='seller_reviews',
+    )
+    comprador = models.ForeignKey(
+        Usuario,
+        on_delete=models.CASCADE,
+        related_name='store_order_seller_reviews',
+    )
+    rating = models.PositiveSmallIntegerField(
+        validators=[MinValueValidator(1), MaxValueValidator(5)],
+    )
+    comentario = models.TextField(blank=True, null=True)
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-creado']
+
+    def __str__(self):
+        return f"Reseña vendedor #{self.id} - Orden {self.order_id}"
 
 class Carrito(models.Model):
     usuario = models.OneToOneField(Usuario, on_delete=models.CASCADE)

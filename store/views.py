@@ -291,7 +291,7 @@ class StoreOrderViewSet(viewsets.ModelViewSet):
             usuario=user,
             precio_unitario=precio_unitario,
             total=total,
-            estado=StoreOrder.ESTADO_EN_CURSO,
+            estado=StoreOrder.ESTADO_PENDIENTE,
         )
 
 class ComentarioViewSet(viewsets.ModelViewSet):
