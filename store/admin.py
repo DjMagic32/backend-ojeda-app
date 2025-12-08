@@ -18,6 +18,8 @@ from .models import (
     Tienda,
     Usuario,
     Wallet,
+    DriverProfile,
+    ServiceRequest,
 )
 from .analytics.predicciones import realizar_predicciones
 from django.contrib import messages
@@ -165,3 +167,25 @@ class StoreOrderSellerReviewAdmin(admin.ModelAdmin):
     list_display = ('id', 'order', 'tienda', 'comprador', 'rating', 'creado')
     search_fields = ('tienda__nombre', 'comprador__username', 'order__id')
     list_filter = ('rating', 'creado')
+
+
+@admin.register(DriverProfile)
+class DriverProfileAdmin(admin.ModelAdmin):
+    list_display = ('usuario', 'estado', 'vehiculo_tipo', 'vehiculo_placa', 'actualizado')
+    search_fields = ('usuario__username', 'vehiculo_placa', 'licencia_numero')
+    list_filter = ('estado', 'vehiculo_tipo')
+
+
+@admin.register(ServiceRequest)
+class ServiceRequestAdmin(admin.ModelAdmin):
+    list_display = (
+        'id',
+        'tipo',
+        'estado',
+        'cliente',
+        'driver',
+        'store_order',
+        'creado',
+    )
+    search_fields = ('cliente__username', 'driver__username', 'store_order__id')
+    list_filter = ('tipo', 'estado', 'creado')

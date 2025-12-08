@@ -3,7 +3,9 @@ from django.db.models import Avg
 from graphene_django import DjangoObjectType
 
 from store.models import (
+    DriverProfile,
     ProductoTienda,
+    ServiceRequest,
     StoreOrder,
     StoreOrderReview,
     StoreOrderSellerReview,
@@ -128,6 +130,7 @@ class UsuarioType(DjangoObjectType):
     foto_identificacion = graphene.String()
     groups = graphene.List(graphene.Int)
     user_permissions = graphene.List(graphene.Int)
+    perfil_conductor = graphene.Field(lambda: DriverProfileType)
 
     class Meta:
         model = Usuario
@@ -149,6 +152,7 @@ class UsuarioType(DjangoObjectType):
             "cedula_pasaporte",
             "foto_identificacion",
             "ingresos_minimos_mensuales",
+            "es_conductor",
             "groups",
             "user_permissions",
         )
@@ -167,6 +171,12 @@ class UsuarioType(DjangoObjectType):
 
     def resolve_user_permissions(self, info):
         return list(self.user_permissions.values_list("id", flat=True))
+
+    def resolve_perfil_conductor(self, info):
+        try:
+            return self.perfil_conductor
+        except DriverProfile.DoesNotExist:
+            return None
 
 
 class StoreOrderType(DjangoObjectType):
@@ -245,3 +255,79 @@ class StoreOrderSellerReviewType(DjangoObjectType):
 
     def resolve_comprador_detalle(self, info):
         return self.comprador
+
+
+class DriverProfileType(DjangoObjectType):
+    usuario = graphene.Int()
+
+    class Meta:
+        model = DriverProfile
+        fields = (
+            "id",
+            "usuario",
+            "licencia_numero",
+            "vehiculo_tipo",
+            "vehiculo_placa",
+            "vehiculo_color",
+            "capacidad_paquetes",
+            "estado",
+            "ubicacion_lat",
+            "ubicacion_lng",
+            "actualizado",
+        )
+
+    def resolve_usuario(self, info):
+        return self.usuario_id
+
+
+class ServiceRequestType(DjangoObjectType):
+    cliente = graphene.Int()
+    driver = graphene.Int()
+    store_order = graphene.Field(StoreOrderType)
+    ruta_geojson = graphene.JSONString()
+    cliente_detalle = graphene.Field(UsuarioType)
+    driver_detalle = graphene.Field(UsuarioType)
+
+    class Meta:
+        model = ServiceRequest
+        fields = (
+            "id",
+            "tipo",
+            "cliente",
+            "driver",
+            "store_order",
+            "pickup_direccion",
+            "pickup_lat",
+            "pickup_lng",
+            "dropoff_direccion",
+            "dropoff_lat",
+            "dropoff_lng",
+            "estado",
+            "distancia_metros",
+            "duracion_segundos",
+            "costo_estimado",
+            "ruta_geojson",
+            "notas",
+            "asignado_en",
+            "completado_en",
+            "creado",
+            "actualizado",
+        )
+
+    def resolve_cliente(self, info):
+        return self.cliente_id
+
+    def resolve_driver(self, info):
+        return self.driver_id if self.driver_id else None
+
+    def resolve_store_order(self, info):
+        return self.store_order
+
+    def resolve_ruta_geojson(self, info):
+        return self.ruta_geojson
+
+    def resolve_cliente_detalle(self, info):
+        return self.cliente
+
+    def resolve_driver_detalle(self, info):
+        return self.driver

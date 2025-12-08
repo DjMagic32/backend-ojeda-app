@@ -32,6 +32,13 @@ DEBUG = True
 ALLOWED_HOSTS = ['0.0.0.0', 'localhost', '127.0.0.1', "*"]
 #ALLOWED_HOSTS = ['*']
 
+CSRF_TRUSTED_ORIGINS = [
+    # Permite acceder vía túneles de ngrok sin disparar el chequeo de origen
+    'https://*.ngrok-free.app',
+]
+
+MAPBOX_ACCESS_TOKEN = config('MAPBOX_TOKEN', default=None)
+
 
 # Application definition
 

@@ -3,15 +3,18 @@ from decimal import Decimal
 from django.contrib.auth.models import AbstractUser
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
+from django.utils import timezone
 
 class Usuario(AbstractUser):
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = ['username'] 
     ES_TIENDA = 'TIENDA'
     ES_CLIENTE = 'CLIENTE'
+    ES_CONDUCTOR = 'CONDUCTOR'
     ROLES = [
         (ES_TIENDA, 'Tienda'),
         (ES_CLIENTE, 'Cliente'),
+        (ES_CONDUCTOR, 'Conductor'),
     ]
 
     GENERO_MASCULINO = 'M'
@@ -30,9 +33,66 @@ class Usuario(AbstractUser):
     cedula_pasaporte = models.CharField(max_length=20, unique=True, blank=True, null=True)
     foto_identificacion = models.ImageField(upload_to='identificaciones/', blank=True, null=True)
     ingresos_minimos_mensuales = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
+    es_conductor = models.BooleanField(default=False)
 
     def __str__(self):
         return f"{self.username} ({self.rol})"
+
+
+class DriverProfile(models.Model):
+    ESTADO_OFFLINE = 'offline'
+    ESTADO_DISPONIBLE = 'available'
+    ESTADO_EN_VIAJE = 'on_trip'
+    ESTADOS = [
+        (ESTADO_OFFLINE, 'Fuera de línea'),
+        (ESTADO_DISPONIBLE, 'Disponible'),
+        (ESTADO_EN_VIAJE, 'En viaje'),
+    ]
+
+    VEHICULO_AUTO = 'auto'
+    VEHICULO_MOTO = 'moto'
+    VEHICULO_BICI = 'bici'
+    TIPOS_VEHICULO = [
+        (VEHICULO_AUTO, 'Auto'),
+        (VEHICULO_MOTO, 'Moto'),
+        (VEHICULO_BICI, 'Bicicleta'),
+    ]
+
+    usuario = models.OneToOneField(
+        Usuario,
+        on_delete=models.CASCADE,
+        related_name='perfil_conductor',
+    )
+    licencia_numero = models.CharField(max_length=64, blank=True, null=True)
+    vehiculo_tipo = models.CharField(max_length=20, choices=TIPOS_VEHICULO, blank=True, null=True)
+    vehiculo_placa = models.CharField(max_length=20, blank=True, null=True)
+    vehiculo_color = models.CharField(max_length=30, blank=True, null=True)
+    capacidad_paquetes = models.PositiveSmallIntegerField(
+        default=1,
+        help_text='Capacidad de paquetes o pasajeros permitidos.',
+    )
+    estado = models.CharField(
+        max_length=20,
+        choices=ESTADOS,
+        default=ESTADO_OFFLINE,
+    )
+    ubicacion_lat = models.DecimalField(
+        max_digits=9,
+        decimal_places=6,
+        blank=True,
+        null=True,
+    )
+    ubicacion_lng = models.DecimalField(
+        max_digits=9,
+        decimal_places=6,
+        blank=True,
+        null=True,
+    )
+    actualizado = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Conductor {self.usuario.email} ({self.estado})"
+
 
 class Tienda(models.Model):
     usuario = models.OneToOneField(Usuario, on_delete=models.CASCADE, limit_choices_to={'rol': Usuario.ES_TIENDA})
@@ -95,6 +155,87 @@ class StoreOrder(models.Model):
 
     def __str__(self):
         return f"Orden #{self.id} - {self.usuario.email} -> {self.producto.nombre}"
+
+
+class ServiceRequest(models.Model):
+    TIPO_TAXI = 'taxi'
+    TIPO_DELIVERY = 'delivery'
+    TIPOS = [
+        (TIPO_TAXI, 'Taxi'),
+        (TIPO_DELIVERY, 'Delivery'),
+    ]
+
+    ESTADO_PENDIENTE = 'pending'
+    ESTADO_ASIGNADO = 'assigned'
+    ESTADO_EN_CURSO = 'in_progress'
+    ESTADO_COMPLETADO = 'completed'
+    ESTADO_CANCELADO = 'cancelled'
+    ESTADOS = [
+        (ESTADO_PENDIENTE, 'Pendiente'),
+        (ESTADO_ASIGNADO, 'Asignado'),
+        (ESTADO_EN_CURSO, 'En curso'),
+        (ESTADO_COMPLETADO, 'Completado'),
+        (ESTADO_CANCELADO, 'Cancelado'),
+    ]
+
+    tipo = models.CharField(max_length=20, choices=TIPOS)
+    cliente = models.ForeignKey(
+        Usuario,
+        on_delete=models.CASCADE,
+        related_name='solicitudes_cliente',
+    )
+    driver = models.ForeignKey(
+        Usuario,
+        on_delete=models.SET_NULL,
+        related_name='solicitudes_conductor',
+        blank=True,
+        null=True,
+        limit_choices_to={'es_conductor': True},
+    )
+    store_order = models.ForeignKey(
+        StoreOrder,
+        on_delete=models.SET_NULL,
+        related_name='service_requests',
+        blank=True,
+        null=True,
+    )
+    pickup_direccion = models.CharField(max_length=255, blank=True, null=True)
+    pickup_lat = models.DecimalField(max_digits=9, decimal_places=6, blank=True, null=True)
+    pickup_lng = models.DecimalField(max_digits=9, decimal_places=6, blank=True, null=True)
+    dropoff_direccion = models.CharField(max_length=255, blank=True, null=True)
+    dropoff_lat = models.DecimalField(max_digits=9, decimal_places=6, blank=True, null=True)
+    dropoff_lng = models.DecimalField(max_digits=9, decimal_places=6, blank=True, null=True)
+    estado = models.CharField(
+        max_length=20,
+        choices=ESTADOS,
+        default=ESTADO_PENDIENTE,
+    )
+    distancia_metros = models.PositiveIntegerField(blank=True, null=True)
+    duracion_segundos = models.PositiveIntegerField(blank=True, null=True)
+    costo_estimado = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
+    ruta_geojson = models.JSONField(blank=True, null=True)
+    notas = models.TextField(blank=True, null=True)
+    asignado_en = models.DateTimeField(blank=True, null=True)
+    completado_en = models.DateTimeField(blank=True, null=True)
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-creado']
+
+    def marcar_asignado(self, driver: Usuario | None = None):
+        self.driver = driver
+        self.estado = self.ESTADO_ASIGNADO
+        self.asignado_en = timezone.now()
+        self.save(update_fields=['driver', 'estado', 'asignado_en', 'actualizado'])
+
+    def marcar_completado(self):
+        self.estado = self.ESTADO_COMPLETADO
+        self.completado_en = timezone.now()
+        self.save(update_fields=['estado', 'completado_en', 'actualizado'])
+
+    def __str__(self):
+        return f"Servicio #{self.id} ({self.tipo}) - {self.estado}"
 
 
 class StoreOrderReview(models.Model):
