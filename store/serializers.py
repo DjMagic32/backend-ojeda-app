@@ -15,6 +15,7 @@ from .models import (
     Wallet,
     Usuario,
     StoreOrder,
+    ProductoFavorito,
 )
 
 class UsuarioSerializer(serializers.ModelSerializer):
@@ -40,17 +41,22 @@ class ProductoTiendaSerializer(serializers.ModelSerializer):
 
 class ItemCarritoSerializer(serializers.ModelSerializer):
     subtotal = serializers.ReadOnlyField()
+    producto_tienda_detalle = ProductoTiendaSerializer(source='producto_tienda', read_only=True)
 
     class Meta:
         model = ItemCarrito
-        fields = ['id', 'producto', 'cantidad', 'subtotal']
+        fields = ['id', 'producto_tienda', 'producto_tienda_detalle', 'cantidad', 'subtotal']
 
 class CarritoSerializer(serializers.ModelSerializer):
     items = ItemCarritoSerializer(many=True, read_only=True)
+    total = serializers.SerializerMethodField()
 
     class Meta:
         model = Carrito
-        fields = ['id', 'usuario', 'items', 'creado']
+        fields = ['id', 'usuario', 'items', 'creado', 'total']
+
+    def get_total(self, obj: Carrito):
+        return sum(item.subtotal for item in obj.items.all())
 
 class PedidoSerializer(serializers.ModelSerializer):
     items = ItemCarritoSerializer(many=True, read_only=True)
@@ -120,6 +126,11 @@ class CarritoItemRemoveSerializer(serializers.Serializer):
     producto_id = serializers.IntegerField()
 
 
+class CarritoItemUpdateSerializer(serializers.Serializer):
+    producto_id = serializers.IntegerField()
+    cantidad = serializers.IntegerField(min_value=1)
+
+
 class WalletActionRequestSerializer(serializers.Serializer):
     amount = serializers.DecimalField(
         max_digits=10,
@@ -164,3 +175,12 @@ class StoreOrderSerializer(serializers.ModelSerializer):
             'creado',
             'actualizado',
         ]
+
+
+class ProductoFavoritoSerializer(serializers.ModelSerializer):
+    producto_detalle = ProductoTiendaSerializer(source='producto', read_only=True)
+
+    class Meta:
+        model = ProductoFavorito
+        fields = ['id', 'producto', 'producto_detalle', 'creado']
+        read_only_fields = ['id', 'creado']

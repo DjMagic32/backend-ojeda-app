@@ -5,6 +5,7 @@ from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.utils import timezone
 
+
 class Usuario(AbstractUser):
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = ['username'] 
@@ -121,6 +122,7 @@ class ProductoTienda(models.Model):
     stock = models.PositiveIntegerField(blank=True, null=True)
     tipo = models.CharField(max_length=15, choices=TIPOS, default=TIPO_PRODUCTO)
     imagen = models.ImageField(upload_to='productos_tienda/', blank=True, null=True)
+    categoria = models.ForeignKey('Categoria', on_delete=models.SET_NULL, null=True, blank=True, related_name='productos_tienda')
 
     def __str__(self):
         return f"{self.nombre} - {self.tienda.nombre} ({self.tipo})"
@@ -306,15 +308,15 @@ class Carrito(models.Model):
 
 class ItemCarrito(models.Model):
     carrito = models.ForeignKey(Carrito, on_delete=models.CASCADE, related_name='items')
-    producto = models.ForeignKey('Producto', on_delete=models.CASCADE)
+    producto_tienda = models.ForeignKey('ProductoTienda', on_delete=models.CASCADE, null=True, blank=True)
     cantidad = models.PositiveIntegerField(default=1)
 
     def __str__(self):
-        return f"{self.cantidad} x {self.producto.nombre}"
+        return f"{self.cantidad} x {self.producto_tienda.nombre}"
 
     @property
     def subtotal(self) -> Decimal:
-        return self.cantidad * self.producto.precio
+        return self.cantidad * self.producto_tienda.precio
 
 class Pedido(models.Model):
     usuario = models.ForeignKey(Usuario, on_delete=models.CASCADE)
@@ -327,9 +329,31 @@ class Pedido(models.Model):
     def __str__(self):
         return f"Pedido {self.id} de {self.usuario.username}"
 
+
+class ProductoFavorito(models.Model):
+    usuario = models.ForeignKey(Usuario, on_delete=models.CASCADE, related_name='favoritos')
+    producto = models.ForeignKey(ProductoTienda, on_delete=models.CASCADE, related_name='favoritado_por')
+    creado = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('usuario', 'producto')
+        ordering = ['-creado']
+
+    def __str__(self):
+        return f"Favorito: {self.usuario.email} -> {self.producto.nombre}"
+
 class Categoria(models.Model):
+    TIPO_PRODUCTO = 'PRODUCTO'
+    TIPO_SERVICIO = 'SERVICIO'
+    TIPOS = [
+        (TIPO_PRODUCTO, 'Producto'),
+        (TIPO_SERVICIO, 'Servicio'),
+    ]
+
     nombre = models.CharField(max_length=100)
     descripcion = models.TextField(blank=True, null=True)
+    tipo = models.CharField(max_length=15, choices=TIPOS, default=TIPO_PRODUCTO)
+    thumbnail = models.ImageField(upload_to='categorias/', blank=True, null=True)
 
     def __str__(self):
         return self.nombre

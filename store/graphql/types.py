@@ -11,6 +11,7 @@ from store.models import (
     StoreOrderSellerReview,
     Tienda,
     Usuario,
+    Categoria,
 )
 
 
@@ -53,12 +54,30 @@ class TiendaType(DjangoObjectType):
         return _absolute_uri(info, self.logo)
 
 
+class CategoriaType(DjangoObjectType):
+    thumbnail = graphene.String()
+
+    class Meta:
+        model = Categoria
+        fields = (
+            "id",
+            "nombre",
+            "descripcion",
+            "tipo",
+            "thumbnail",
+        )
+
+    def resolve_thumbnail(self, info):
+        return _absolute_uri(info, self.thumbnail)
+
+
 class ProductoTiendaType(DjangoObjectType):
     tienda = graphene.Int()
     imagen = graphene.String()
     reviews = graphene.List(lambda: StoreOrderReviewType)
     average_rating = graphene.Float()
     total_reviews = graphene.Int()
+    categoria = graphene.Field(CategoriaType)
 
     class Meta:
         model = ProductoTienda
@@ -71,6 +90,7 @@ class ProductoTiendaType(DjangoObjectType):
             "stock",
             "tipo",
             "imagen",
+            "categoria",
         )
 
     def resolve_tienda(self, info):
@@ -91,6 +111,9 @@ class ProductoTiendaType(DjangoObjectType):
 
     def resolve_total_reviews(self, info):
         return self.reviews.count()
+
+    def resolve_categoria(self, info):
+        return self.categoria
 
 
 class StoreOrderReviewType(DjangoObjectType):

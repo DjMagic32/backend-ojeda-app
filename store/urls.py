@@ -20,6 +20,7 @@ from .views import (
     CreateUserView,
     UsuarioDetalleView,
     StoreOrderViewSet,
+    ProductoFavoritoView,
 )
 
 router = DefaultRouter()
@@ -35,10 +36,11 @@ router.register(r'referencias', ReferenciaViewSet)
 router.register(r'wallets', WalletViewSet)
 
 urlpatterns = [
-    path('app/', include(router.urls)),
+    path('', include(router.urls)),
     path('register-user/', CreateUserView.as_view(), name='user-register'),  # Ruta para crear usuarios
     path('carrito/', CarritoView.as_view(), name='carrito'),
     path('pedidos/', PedidoView.as_view(), name='pedidos'),
     path('wallet-action/', WalletActionView.as_view(), name='wallet-action'),
     path('usuario-detalle/', UsuarioDetalleView.as_view(), name='usuario-detalle'),
+    path('favoritos/', ProductoFavoritoView.as_view(), name='favoritos'),
 ]

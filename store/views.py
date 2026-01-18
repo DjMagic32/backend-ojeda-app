@@ -1,5 +1,5 @@
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework import viewsets, status, permissions, generics
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.exceptions import ValidationError
@@ -19,6 +19,7 @@ from .models import (
     Wallet,
     Usuario,
     StoreOrder,
+    ProductoFavorito,
 )
 from .serializers import (
     ProductoSerializer,
@@ -36,9 +37,11 @@ from .serializers import (
     RegisterUserSerializer,
     CarritoItemAddSerializer,
     CarritoItemRemoveSerializer,
+    CarritoItemUpdateSerializer,
     WalletActionRequestSerializer,
     UsuarioDetalleRequestSerializer,
     StoreOrderSerializer,
+    ProductoFavoritoSerializer,
 )
 from .permissions import EsTienda
 
@@ -108,7 +111,7 @@ class UsuarioViewSet(viewsets.ModelViewSet):
     serializer_class = UsuarioSerializer
 
 class CategoriaViewSet(viewsets.ModelViewSet):
-    #permission_classes = [IsAuthenticated]
+    permission_classes = [AllowAny]
     queryset = Categoria.objects.all()
     serializer_class = CategoriaSerializer
 
@@ -119,16 +122,21 @@ class ProductoViewSet(viewsets.ModelViewSet):
 
 class CarritoView(generics.GenericAPIView):
     serializer_class = CarritoSerializer
-    # permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated]
 
     @extend_schema(responses=CarritoSerializer)
     def get(self, request):
+        # Debug auth
+        user = getattr(request, "user", None)
+        print("[CarritoView][GET] user:", user, "is_authenticated:", getattr(user, "is_authenticated", False))
         carrito, _ = Carrito.objects.get_or_create(usuario=request.user)
         serializer = CarritoSerializer(carrito)
         return Response(serializer.data)
 
     @extend_schema(request=CarritoItemAddSerializer, responses=CarritoSerializer)
     def post(self, request):
+        user = getattr(request, "user", None)
+        print("[CarritoView][POST] user:", user, "is_authenticated:", getattr(user, "is_authenticated", False))
         payload = CarritoItemAddSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
 
@@ -137,15 +145,15 @@ class CarritoView(generics.GenericAPIView):
         cantidad = payload.validated_data.get('cantidad', 1)
 
         try:
-            producto = Producto.objects.get(id=producto_id)
-        except Producto.DoesNotExist:
+            producto = ProductoTienda.objects.get(id=producto_id)
+        except ProductoTienda.DoesNotExist:
             return Response(
                 {'error': 'Producto no encontrado'},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
         item, created = ItemCarrito.objects.get_or_create(
-            carrito=carrito, producto=producto
+            carrito=carrito, producto_tienda=producto
         )
         if not created:
             item.cantidad += cantidad
@@ -154,8 +162,42 @@ class CarritoView(generics.GenericAPIView):
         serializer = CarritoSerializer(carrito)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
+    @extend_schema(request=CarritoItemUpdateSerializer, responses=CarritoSerializer)
+    def patch(self, request):
+        user = getattr(request, "user", None)
+        print("[CarritoView][PATCH] user:", user, "is_authenticated:", getattr(user, "is_authenticated", False))
+        payload = CarritoItemUpdateSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+
+        carrito, _ = Carrito.objects.get_or_create(usuario=request.user)
+        producto_id = payload.validated_data['producto_id']
+        cantidad = payload.validated_data['cantidad']
+
+        try:
+            producto = ProductoTienda.objects.get(id=producto_id)
+        except ProductoTienda.DoesNotExist:
+            return Response(
+                {'error': 'Producto no encontrado'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            item = ItemCarrito.objects.get(carrito=carrito, producto_tienda=producto)
+        except ItemCarrito.DoesNotExist:
+            return Response(
+                {'error': 'El producto no está en el carrito'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        item.cantidad = cantidad
+        item.save()
+        serializer = CarritoSerializer(carrito)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
     @extend_schema(request=CarritoItemRemoveSerializer, responses=CarritoSerializer)
     def delete(self, request):
+        user = getattr(request, "user", None)
+        print("[CarritoView][DELETE] user:", user, "is_authenticated:", getattr(user, "is_authenticated", False))
         payload = CarritoItemRemoveSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
 
@@ -163,15 +205,15 @@ class CarritoView(generics.GenericAPIView):
         producto_id = payload.validated_data['producto_id']
 
         try:
-            producto = Producto.objects.get(id=producto_id)
-        except Producto.DoesNotExist:
+            producto = ProductoTienda.objects.get(id=producto_id)
+        except ProductoTienda.DoesNotExist:
             return Response(
                 {'error': 'Producto no encontrado'},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
         try:
-            item = ItemCarrito.objects.get(carrito=carrito, producto=producto)
+            item = ItemCarrito.objects.get(carrito=carrito, producto_tienda=producto)
         except ItemCarrito.DoesNotExist:
             return Response(
                 {'error': 'El producto no está en el carrito'},
@@ -184,7 +226,7 @@ class CarritoView(generics.GenericAPIView):
 
 class PedidoView(generics.GenericAPIView):
     serializer_class = PedidoSerializer
-    # permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated]
 
     @extend_schema(responses=PedidoSerializer)
     def post(self, request):
@@ -377,3 +419,49 @@ class UsuarioDetalleView(generics.GenericAPIView):
             usuario_data['tienda'] = tienda_serializer.data
 
         return Response(usuario_data, status=status.HTTP_200_OK)
+
+
+class ProductoFavoritoView(generics.GenericAPIView):
+    serializer_class = ProductoFavoritoSerializer
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses=ProductoFavoritoSerializer(many=True))
+    def get(self, request):
+        user = getattr(request, "user", None)
+        print("[Favoritos][GET] user:", user, "is_authenticated:", getattr(user, "is_authenticated", False))
+        favoritos = ProductoFavorito.objects.filter(usuario=request.user).select_related('producto')
+        serializer = ProductoFavoritoSerializer(favoritos, many=True)
+        return Response(serializer.data)
+
+    @extend_schema(request=ProductoFavoritoSerializer, responses=ProductoFavoritoSerializer)
+    def post(self, request):
+        user = getattr(request, "user", None)
+        print("[Favoritos][POST] user:", user, "is_authenticated:", getattr(user, "is_authenticated", False))
+        producto_id = request.data.get('producto')
+        if not producto_id:
+            return Response({'error': 'producto es requerido'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            producto = ProductoTienda.objects.get(pk=producto_id)
+        except ProductoTienda.DoesNotExist:
+            return Response({'error': 'Producto no encontrado'}, status=status.HTTP_404_NOT_FOUND)
+
+        favorito, _ = ProductoFavorito.objects.get_or_create(
+            usuario=request.user,
+            producto=producto,
+        )
+        serializer = ProductoFavoritoSerializer(favorito)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    @extend_schema(request=ProductoFavoritoSerializer, responses=ProductoFavoritoSerializer)
+    def delete(self, request):
+        user = getattr(request, "user", None)
+        print("[Favoritos][DELETE] user:", user, "is_authenticated:", getattr(user, "is_authenticated", False))
+        producto_id = request.data.get('producto')
+        if not producto_id:
+            return Response({'error': 'producto es requerido'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            favorito = ProductoFavorito.objects.get(usuario=request.user, producto_id=producto_id)
+        except ProductoFavorito.DoesNotExist:
+            return Response({'error': 'Favorito no encontrado'}, status=status.HTTP_404_NOT_FOUND)
+        favorito.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)

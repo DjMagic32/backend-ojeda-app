@@ -51,8 +51,8 @@ class CarritoAdmin(admin.ModelAdmin):
 
 @admin.register(ItemCarrito)
 class ItemCarritoAdmin(admin.ModelAdmin):
-    list_display = ('carrito', 'producto', 'cantidad')
-    search_fields = ('carrito__usuario__username', 'producto__nombre')
+    list_display = ('carrito', 'producto_tienda', 'cantidad')
+    search_fields = ('carrito__usuario__username', 'producto_tienda__nombre')
     list_filter = ('carrito',)
 
 @admin.register(Categoria)
