@@ -16,9 +16,12 @@ from .models import (
     Usuario,
     StoreOrder,
     ProductoFavorito,
+    Notificacion,
 )
 
 class UsuarioSerializer(serializers.ModelSerializer):
+    avatar = serializers.ImageField(required=False, allow_null=True)
+
     class Meta:
         model = Usuario
         fields = '__all__'
@@ -183,4 +186,11 @@ class ProductoFavoritoSerializer(serializers.ModelSerializer):
     class Meta:
         model = ProductoFavorito
         fields = ['id', 'producto', 'producto_detalle', 'creado']
+        read_only_fields = ['id', 'creado']
+
+
+class NotificacionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Notificacion
+        fields = ['id', 'titulo', 'mensaje', 'tipo', 'leido', 'creado']
         read_only_fields = ['id', 'creado']

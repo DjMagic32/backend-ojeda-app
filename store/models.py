@@ -35,6 +35,7 @@ class Usuario(AbstractUser):
     foto_identificacion = models.ImageField(upload_to='identificaciones/', blank=True, null=True)
     ingresos_minimos_mensuales = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     es_conductor = models.BooleanField(default=False)
+    avatar = models.ImageField(upload_to='avatars/', blank=True, null=True)
 
     def __str__(self):
         return f"{self.username} ({self.rol})"
@@ -341,6 +342,36 @@ class ProductoFavorito(models.Model):
 
     def __str__(self):
         return f"Favorito: {self.usuario.email} -> {self.producto.nombre}"
+
+
+class Notificacion(models.Model):
+    TIPO_FAVORITO = 'favorite'
+    TIPO_ORDEN = 'order'
+    TIPO_SERVICIO = 'service'
+    TIPO_GENERAL = 'general'
+    TIPOS = [
+        (TIPO_FAVORITO, 'Favorito'),
+        (TIPO_ORDEN, 'Orden'),
+        (TIPO_SERVICIO, 'Servicio'),
+        (TIPO_GENERAL, 'General'),
+    ]
+
+    usuario = models.ForeignKey(
+        Usuario,
+        on_delete=models.CASCADE,
+        related_name='notificaciones',
+    )
+    titulo = models.CharField(max_length=255)
+    mensaje = models.TextField(blank=True)
+    tipo = models.CharField(max_length=20, choices=TIPOS, default=TIPO_GENERAL)
+    leido = models.BooleanField(default=False)
+    creado = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-creado']
+
+    def __str__(self):
+        return f"{self.usuario.email} - {self.titulo}"
 
 class Categoria(models.Model):
     TIPO_PRODUCTO = 'PRODUCTO'

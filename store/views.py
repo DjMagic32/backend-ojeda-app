@@ -20,6 +20,7 @@ from .models import (
     Usuario,
     StoreOrder,
     ProductoFavorito,
+    Notificacion,
 )
 from .serializers import (
     ProductoSerializer,
@@ -42,6 +43,7 @@ from .serializers import (
     UsuarioDetalleRequestSerializer,
     StoreOrderSerializer,
     ProductoFavoritoSerializer,
+    NotificacionSerializer,
 )
 from .permissions import EsTienda
 
@@ -421,6 +423,21 @@ class UsuarioDetalleView(generics.GenericAPIView):
         return Response(usuario_data, status=status.HTTP_200_OK)
 
 
+class UsuarioProfileUpdateView(generics.GenericAPIView):
+    serializer_class = UsuarioSerializer
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(request=UsuarioSerializer, responses=UsuarioSerializer)
+    def patch(self, request):
+        user = request.user
+        if not user or not user.is_authenticated:
+            return Response({'error': 'Autenticación requerida'}, status=status.HTTP_401_UNAUTHORIZED)
+        serializer = self.get_serializer(user, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+
 class ProductoFavoritoView(generics.GenericAPIView):
     serializer_class = ProductoFavoritoSerializer
     permission_classes = [IsAuthenticated]
@@ -449,6 +466,13 @@ class ProductoFavoritoView(generics.GenericAPIView):
             usuario=request.user,
             producto=producto,
         )
+        Notificacion.objects.create(
+            usuario=request.user,
+            titulo='Producto agregado a favoritos',
+            mensaje=f'{producto.nombre} ahora está en tu lista de favoritos.',
+            tipo=Notificacion.TIPO_FAVORITO,
+            leido=False,
+        )
         serializer = ProductoFavoritoSerializer(favorito)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
@@ -464,4 +488,54 @@ class ProductoFavoritoView(generics.GenericAPIView):
         except ProductoFavorito.DoesNotExist:
             return Response({'error': 'Favorito no encontrado'}, status=status.HTTP_404_NOT_FOUND)
         favorito.delete()
+        try:
+            producto = ProductoTienda.objects.get(pk=producto_id)
+            Notificacion.objects.create(
+                usuario=request.user,
+                titulo='Producto removido de favoritos',
+                mensaje=f'{producto.nombre} se quitó de tu lista de favoritos.',
+                tipo=Notificacion.TIPO_FAVORITO,
+                leido=False,
+            )
+        except ProductoTienda.DoesNotExist:
+            pass
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class NotificacionListView(generics.GenericAPIView):
+    serializer_class = NotificacionSerializer
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses=NotificacionSerializer(many=True))
+    def get(self, request):
+        qs = Notificacion.objects.filter(usuario=request.user).order_by('-creado')
+        serializer = self.get_serializer(qs, many=True)
+        return Response(serializer.data)
+
+
+class NotificacionUnreadCountView(generics.GenericAPIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses={'application/json': {'type': 'object'}})
+    def get(self, request):
+        count = Notificacion.objects.filter(usuario=request.user, leido=False).count()
+        return Response({'unread': count})
+
+
+class NotificacionMarkReadView(generics.GenericAPIView):
+    serializer_class = NotificacionSerializer
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses=NotificacionSerializer)
+    def post(self, request, pk: int):
+        try:
+            notificacion = Notificacion.objects.get(pk=pk, usuario=request.user)
+        except Notificacion.DoesNotExist:
+            return Response({'error': 'Notificación no encontrada'}, status=status.HTTP_404_NOT_FOUND)
+
+        if not notificacion.leido:
+            notificacion.leido = True
+            notificacion.save(update_fields=['leido'])
+
+        serializer = self.get_serializer(notificacion)
+        return Response(serializer.data)

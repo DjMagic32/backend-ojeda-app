@@ -19,8 +19,12 @@ from .views import (
     WalletActionView,
     CreateUserView,
     UsuarioDetalleView,
+    UsuarioProfileUpdateView,
     StoreOrderViewSet,
     ProductoFavoritoView,
+    NotificacionListView,
+    NotificacionMarkReadView,
+    NotificacionUnreadCountView,
 )
 
 router = DefaultRouter()
@@ -42,5 +46,9 @@ urlpatterns = [
     path('pedidos/', PedidoView.as_view(), name='pedidos'),
     path('wallet-action/', WalletActionView.as_view(), name='wallet-action'),
     path('usuario-detalle/', UsuarioDetalleView.as_view(), name='usuario-detalle'),
+    path('usuario-perfil/', UsuarioProfileUpdateView.as_view(), name='usuario-perfil'),
     path('favoritos/', ProductoFavoritoView.as_view(), name='favoritos'),
+    path('notificaciones/', NotificacionListView.as_view(), name='notificaciones'),
+    path('notificaciones/unread-count/', NotificacionUnreadCountView.as_view(), name='notificaciones-unread-count'),
+    path('notificaciones/<int:pk>/read/', NotificacionMarkReadView.as_view(), name='notificacion-marcar-leida'),
 ]
