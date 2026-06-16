@@ -1,11 +1,11 @@
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Iterable, Optional, Type
 
 import graphene
 from graphene import Enum
 from graphql import GraphQLError
 from django.contrib.auth import authenticate
-from django.db.models import QuerySet
+from django.db.models import Q, QuerySet
 from django.utils import timezone
 from rest_framework_simplejwt.tokens import RefreshToken
 
@@ -16,6 +16,7 @@ from store.models import (
     StoreOrder,
     StoreOrderReview,
     StoreOrderSellerReview,
+    TasaCambio,
     Tienda,
     Usuario,
 )
@@ -38,6 +39,11 @@ from store.services.mapbox import (
 class ProductScopeEnum(Enum):
     ALL = "all"
     MINE = "mine"
+
+
+class ProductoTipoEnum(Enum):
+    PRODUCTO = ProductoTienda.TIPO_PRODUCTO
+    SERVICIO = ProductoTienda.TIPO_SERVICIO
 
 
 class StoreOrderScopeEnum(Enum):
@@ -129,6 +135,11 @@ class Query(graphene.ObjectType):
     store_products = graphene.List(
         ProductoTiendaType,
         scope=graphene.Argument(ProductScopeEnum, default_value=ProductScopeEnum.ALL),
+        categoria_id=graphene.ID(),
+        precio_min=graphene.Float(),
+        precio_max=graphene.Float(),
+        search=graphene.String(),
+        tipo=graphene.Argument(ProductoTipoEnum),
     )
     store_product = graphene.Field(
         ProductoTiendaType,
@@ -157,11 +168,21 @@ class Query(graphene.ObjectType):
             raise GraphQLError("Autenticación requerida")
         return user
 
-    def resolve_store_products(self, info, scope=ProductScopeEnum.ALL):
+    def resolve_store_products(
+        self,
+        info,
+        scope=ProductScopeEnum.ALL,
+        categoria_id: Optional[int] = None,
+        precio_min: Optional[float] = None,
+        precio_max: Optional[float] = None,
+        search: Optional[str] = None,
+        tipo: Optional[ProductoTipoEnum] = None,
+    ):
         scope_value = _normalize_scope(scope, ProductScopeEnum, ProductScopeEnum.ALL.value)
         queryset: QuerySet[ProductoTienda] = ProductoTienda.objects.select_related(
             "tienda",
             "tienda__usuario",
+            "categoria",
         )
 
         if scope_value == ProductScopeEnum.MINE.value:
@@ -175,6 +196,32 @@ class Query(graphene.ObjectType):
             except Tienda.DoesNotExist:
                 return []
             queryset = queryset.filter(tienda=tienda)
+
+        if categoria_id is not None:
+            queryset = queryset.filter(categoria_id=categoria_id)
+
+        if tipo is not None:
+            tipo_value = tipo.value if hasattr(tipo, "value") else str(tipo)
+            queryset = queryset.filter(tipo=tipo_value)
+
+        if precio_min is not None:
+            try:
+                queryset = queryset.filter(precio__gte=Decimal(str(precio_min)))
+            except (InvalidOperation, ValueError) as exc:
+                raise GraphQLError("precio_min inválido") from exc
+
+        if precio_max is not None:
+            try:
+                queryset = queryset.filter(precio__lte=Decimal(str(precio_max)))
+            except (InvalidOperation, ValueError) as exc:
+                raise GraphQLError("precio_max inválido") from exc
+
+        if search:
+            term = search.strip()
+            if term:
+                queryset = queryset.filter(
+                    Q(nombre__icontains=term) | Q(descripcion__icontains=term)
+                )
 
         return list(queryset)
 
@@ -340,6 +387,7 @@ class CreateStoreOrder(graphene.Mutation):
 
         precio_unitario: Decimal = producto.precio
         total = precio_unitario * Decimal(cantidad)
+        tasa = TasaCambio.vigente()
 
         order = StoreOrder.objects.create(
             usuario=user,
@@ -347,6 +395,8 @@ class CreateStoreOrder(graphene.Mutation):
             cantidad=cantidad,
             precio_unitario=precio_unitario,
             total=total,
+            moneda=producto.moneda,
+            tasa_aplicada=tasa.valor_bs if tasa else None,
             estado=StoreOrder.ESTADO_PENDIENTE,
             direccion_entrega=direccion_entrega,
             notas=notas,

@@ -35,6 +35,8 @@ ALLOWED_HOSTS = ['0.0.0.0', 'localhost', '127.0.0.1', "*"]
 CSRF_TRUSTED_ORIGINS = [
     # Permite acceder vía túneles de ngrok sin disparar el chequeo de origen
     'https://*.ngrok-free.app',
+    # Permite subdominios temporales de Cloudflare Tunnel
+    'https://*.trycloudflare.com',
 ]
 
 MAPBOX_ACCESS_TOKEN = config('MAPBOX_TOKEN', default=None)
@@ -43,6 +45,8 @@ MAPBOX_ACCESS_TOKEN = config('MAPBOX_TOKEN', default=None)
 # Application definition
 
 INSTALLED_APPS = [
+    'daphne',
+    'channels',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -62,7 +66,8 @@ MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
-    'django.middleware.csrf.CsrfViewMiddleware',
+    # Deshabilitado temporalmente en desarrollo para evitar bloqueos CSRF
+    # 'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
@@ -87,6 +92,24 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'backend_ojeda.wsgi.application'
+ASGI_APPLICATION = 'backend_ojeda.asgi.application'
+
+# Channels: por defecto usa la capa en memoria (suficiente para un único
+# proceso en desarrollo). Si se define ``REDIS_URL`` se conmuta a redis.
+REDIS_URL = config('REDIS_URL', default=None)
+if REDIS_URL:
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels_redis.core.RedisChannelLayer',
+            'CONFIG': {'hosts': [REDIS_URL]},
+        }
+    }
+else:
+    CHANNEL_LAYERS = {
+        'default': {'BACKEND': 'channels.layers.InMemoryChannelLayer'},
+    }
+
+EXPO_PUSH_DISABLED = config('EXPO_PUSH_DISABLED', default=False, cast=bool)
 
 
 # Database

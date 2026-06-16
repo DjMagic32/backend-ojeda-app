@@ -7,7 +7,10 @@ from .models import (
     Categoria,
     Comentario,
     ComentarioProducto,
+    Conversation,
+    ExpoPushToken,
     ItemCarrito,
+    Message,
     Pedido,
     Producto,
     ProductoTienda,
@@ -174,6 +177,26 @@ class DriverProfileAdmin(admin.ModelAdmin):
     list_display = ('usuario', 'estado', 'vehiculo_tipo', 'vehiculo_placa', 'actualizado')
     search_fields = ('usuario__username', 'vehiculo_placa', 'licencia_numero')
     list_filter = ('estado', 'vehiculo_tipo')
+
+
+@admin.register(Conversation)
+class ConversationAdmin(admin.ModelAdmin):
+    list_display = ('id', 'producto', 'creado', 'actualizado')
+    search_fields = ('participantes__email',)
+    list_filter = ('creado',)
+
+
+@admin.register(Message)
+class MessageAdmin(admin.ModelAdmin):
+    list_display = ('id', 'conversation', 'autor', 'leido', 'creado')
+    search_fields = ('autor__email', 'contenido')
+    list_filter = ('leido', 'creado')
+
+
+@admin.register(ExpoPushToken)
+class ExpoPushTokenAdmin(admin.ModelAdmin):
+    list_display = ('usuario', 'plataforma', 'creado', 'actualizado')
+    search_fields = ('usuario__email', 'token')
 
 
 @admin.register(ServiceRequest)

@@ -9,12 +9,17 @@ from .views import (
     TiendaViewSet,
     ProductoTiendaViewSet,
     CarritoView,
+    ConversationViewSet,
+    ExpoPushTokenView,
     PedidoView,
     CategoriaViewSet,
     ProductoViewSet,
     ComentarioViewSet,
     ComentarioProductoViewSet,
     ReferenciaViewSet,
+    StoreDashboardView,
+    TasaCambioHistoryView,
+    TasaCambioView,
     WalletViewSet,
     WalletActionView,
     CreateUserView,
@@ -38,6 +43,7 @@ router.register(r'comentarios', ComentarioViewSet)
 router.register(r'comentarios-producto', ComentarioProductoViewSet)
 router.register(r'referencias', ReferenciaViewSet)
 router.register(r'wallets', WalletViewSet)
+router.register(r'conversations', ConversationViewSet, basename='conversations')
 
 urlpatterns = [
     path('', include(router.urls)),
@@ -51,4 +57,8 @@ urlpatterns = [
     path('notificaciones/', NotificacionListView.as_view(), name='notificaciones'),
     path('notificaciones/unread-count/', NotificacionUnreadCountView.as_view(), name='notificaciones-unread-count'),
     path('notificaciones/<int:pk>/read/', NotificacionMarkReadView.as_view(), name='notificacion-marcar-leida'),
+    path('push-tokens/', ExpoPushTokenView.as_view(), name='push-tokens'),
+    path('exchange-rate/', TasaCambioView.as_view(), name='exchange-rate'),
+    path('exchange-rate/history/', TasaCambioHistoryView.as_view(), name='exchange-rate-history'),
+    path('store/dashboard/', StoreDashboardView.as_view(), name='store-dashboard'),
 ]

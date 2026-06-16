@@ -108,6 +108,14 @@ class Tienda(models.Model):
     def __str__(self):
         return self.nombre
 
+MONEDA_USD = 'USD'
+MONEDA_VES = 'VES'
+MONEDAS = [
+    (MONEDA_USD, 'Dólares (USD)'),
+    (MONEDA_VES, 'Bolívares (VES)'),
+]
+
+
 class ProductoTienda(models.Model):
     TIPO_PRODUCTO = 'PRODUCTO'
     TIPO_SERVICIO = 'SERVICIO'
@@ -120,6 +128,7 @@ class ProductoTienda(models.Model):
     nombre = models.CharField(max_length=200)
     descripcion = models.TextField()
     precio = models.DecimalField(max_digits=10, decimal_places=2)
+    moneda = models.CharField(max_length=3, choices=MONEDAS, default=MONEDA_USD)
     stock = models.PositiveIntegerField(blank=True, null=True)
     tipo = models.CharField(max_length=15, choices=TIPOS, default=TIPO_PRODUCTO)
     imagen = models.ImageField(upload_to='productos_tienda/', blank=True, null=True)
@@ -147,6 +156,14 @@ class StoreOrder(models.Model):
     cantidad = models.PositiveIntegerField(default=1)
     precio_unitario = models.DecimalField(max_digits=10, decimal_places=2)
     total = models.DecimalField(max_digits=12, decimal_places=2)
+    moneda = models.CharField(max_length=3, choices=MONEDAS, default=MONEDA_USD)
+    tasa_aplicada = models.DecimalField(
+        max_digits=12,
+        decimal_places=4,
+        blank=True,
+        null=True,
+        help_text='Tasa USD→VES vigente al crear la orden (snapshot).',
+    )
     estado = models.CharField(max_length=20, choices=ESTADOS, default=ESTADO_PENDIENTE)
     direccion_entrega = models.CharField(max_length=255, blank=True, null=True)
     notas = models.TextField(blank=True, null=True)
@@ -348,11 +365,13 @@ class Notificacion(models.Model):
     TIPO_FAVORITO = 'favorite'
     TIPO_ORDEN = 'order'
     TIPO_SERVICIO = 'service'
+    TIPO_MENSAJE = 'message'
     TIPO_GENERAL = 'general'
     TIPOS = [
         (TIPO_FAVORITO, 'Favorito'),
         (TIPO_ORDEN, 'Orden'),
         (TIPO_SERVICIO, 'Servicio'),
+        (TIPO_MENSAJE, 'Mensaje'),
         (TIPO_GENERAL, 'General'),
     ]
 
@@ -364,6 +383,7 @@ class Notificacion(models.Model):
     titulo = models.CharField(max_length=255)
     mensaje = models.TextField(blank=True)
     tipo = models.CharField(max_length=20, choices=TIPOS, default=TIPO_GENERAL)
+    data = models.JSONField(blank=True, null=True)
     leido = models.BooleanField(default=False)
     creado = models.DateTimeField(auto_now_add=True)
 
@@ -438,3 +458,134 @@ class Wallet(models.Model):
 
     def __str__(self):
         return f"Wallet de {self.usuario.username} - Saldo: {self.saldo}"
+
+
+class Conversation(models.Model):
+    """Conversación 1-a-1 entre dos usuarios (típicamente cliente <-> tienda).
+
+    Se asocia opcionalmente a un producto para dar contexto al chat iniciado
+    desde la ficha de producto.
+    """
+
+    participantes = models.ManyToManyField(
+        Usuario,
+        related_name='conversaciones',
+    )
+    producto = models.ForeignKey(
+        ProductoTienda,
+        on_delete=models.SET_NULL,
+        related_name='conversaciones',
+        blank=True,
+        null=True,
+    )
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-actualizado']
+
+    def __str__(self):
+        return f"Conversación #{self.id}"
+
+    @classmethod
+    def get_or_create_between(cls, user_a: Usuario, user_b: Usuario, producto: 'ProductoTienda | None' = None):
+        """Devuelve la conversación existente entre dos usuarios o crea una nueva.
+
+        Si se pasa producto, se prefiere una conversación que coincida con ese producto.
+        """
+        qs = cls.objects.filter(participantes=user_a).filter(participantes=user_b)
+        if producto is not None:
+            existente = qs.filter(producto=producto).first()
+            if existente:
+                return existente, False
+        existente = qs.filter(producto__isnull=True).first() if producto is None else qs.first()
+        if existente:
+            return existente, False
+        conversacion = cls.objects.create(producto=producto)
+        conversacion.participantes.set([user_a, user_b])
+        return conversacion, True
+
+
+class Message(models.Model):
+    conversation = models.ForeignKey(
+        Conversation,
+        on_delete=models.CASCADE,
+        related_name='mensajes',
+    )
+    autor = models.ForeignKey(
+        Usuario,
+        on_delete=models.CASCADE,
+        related_name='mensajes_enviados',
+    )
+    contenido = models.TextField()
+    leido = models.BooleanField(default=False)
+    creado = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['creado']
+        indexes = [
+            models.Index(fields=['conversation', 'creado']),
+        ]
+
+    def __str__(self):
+        return f"Mensaje #{self.id} de {self.autor.email}"
+
+
+class TasaCambio(models.Model):
+    """Tasa de conversión USD→VES vigente en una fecha dada.
+
+    El sistema toma siempre el registro más reciente (`-creado`) como tasa activa.
+    Se registran manualmente por un admin/staff (ej. tasa BCV del día).
+    """
+
+    FUENTE_BCV = 'BCV'
+    FUENTE_PARALELO = 'PARALELO'
+    FUENTE_MANUAL = 'MANUAL'
+    FUENTES = [
+        (FUENTE_BCV, 'BCV'),
+        (FUENTE_PARALELO, 'Paralelo'),
+        (FUENTE_MANUAL, 'Manual'),
+    ]
+
+    valor_bs = models.DecimalField(
+        max_digits=12,
+        decimal_places=4,
+        help_text='Cuántos bolívares equivalen a 1 USD.',
+    )
+    fuente = models.CharField(max_length=15, choices=FUENTES, default=FUENTE_BCV)
+    registrado_por = models.ForeignKey(
+        Usuario,
+        on_delete=models.SET_NULL,
+        related_name='tasas_registradas',
+        blank=True,
+        null=True,
+    )
+    creado = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-creado']
+        indexes = [models.Index(fields=['-creado'])]
+
+    def __str__(self):
+        return f"1 USD = {self.valor_bs} VES ({self.fuente}, {self.creado:%Y-%m-%d %H:%M})"
+
+    @classmethod
+    def vigente(cls) -> 'TasaCambio | None':
+        return cls.objects.order_by('-creado').first()
+
+
+class ExpoPushToken(models.Model):
+    """Token de Expo Push Notifications asociado a un usuario y dispositivo."""
+
+    usuario = models.ForeignKey(
+        Usuario,
+        on_delete=models.CASCADE,
+        related_name='push_tokens',
+    )
+    token = models.CharField(max_length=255, unique=True)
+    plataforma = models.CharField(max_length=20, blank=True, null=True)
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"PushToken {self.usuario.email} ({self.token[:12]}…)"
