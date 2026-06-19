@@ -103,6 +103,13 @@ class Tienda(models.Model):
     telefono = models.CharField(max_length=15, blank=True, null=True)
     logo = models.ImageField(upload_to='logos/', blank=True, null=True)
     informacion_fiscal = models.TextField(blank=True, null=True)
+    ubicacion_lat = models.DecimalField(
+        max_digits=9, decimal_places=6, null=True, blank=True,
+    )
+    ubicacion_lng = models.DecimalField(
+        max_digits=9, decimal_places=6, null=True, blank=True,
+    )
+    ubicacion_actualizada = models.DateTimeField(null=True, blank=True)
     creado = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

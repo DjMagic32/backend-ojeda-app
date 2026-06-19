@@ -40,6 +40,7 @@ CSRF_TRUSTED_ORIGINS = [
 ]
 
 MAPBOX_ACCESS_TOKEN = config('MAPBOX_TOKEN', default=None)
+GOOGLE_WEB_CLIENT_ID = config('GOOGLE_WEB_CLIENT_ID', default='')
 
 
 # Application definition

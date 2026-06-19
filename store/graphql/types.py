@@ -44,6 +44,9 @@ class TiendaType(DjangoObjectType):
             "telefono",
             "logo",
             "informacion_fiscal",
+            "ubicacion_lat",
+            "ubicacion_lng",
+            "ubicacion_actualizada",
             "creado",
         )
 

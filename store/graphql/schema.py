@@ -1,12 +1,15 @@
 from decimal import Decimal, InvalidOperation
+from math import asin, cos, radians, sin, sqrt
 from typing import Iterable, Optional, Type
 
 import graphene
 from graphene import Enum
 from graphql import GraphQLError
+from django.conf import settings
 from django.contrib.auth import authenticate
 from django.db.models import Q, QuerySet
 from django.utils import timezone
+from django.utils.crypto import get_random_string
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from store.models import (
@@ -46,6 +49,12 @@ class ProductoTipoEnum(Enum):
     SERVICIO = ProductoTienda.TIPO_SERVICIO
 
 
+class UsuarioRolEnum(Enum):
+    CLIENTE = Usuario.ES_CLIENTE
+    TIENDA = Usuario.ES_TIENDA
+    CONDUCTOR = Usuario.ES_CONDUCTOR
+
+
 class StoreOrderScopeEnum(Enum):
     MINE = "mine"
     STORE = "store"
@@ -80,6 +89,15 @@ class DriverStatusEnum(Enum):
 class ServiceRequestScopeEnum(Enum):
     CLIENT = "client"
     DRIVER = "driver"
+
+
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    earth_radius_km = 6371.0
+    rlat1, rlat2 = radians(lat1), radians(lat2)
+    dlat = radians(lat2 - lat1)
+    dlon = radians(lon2 - lon1)
+    a = sin(dlat / 2) ** 2 + cos(rlat1) * cos(rlat2) * sin(dlon / 2) ** 2
+    return 2 * earth_radius_km * asin(sqrt(a))
 
 
 def _normalize_scope(scope_value, enum_cls: Type[Enum], default_value: str) -> str:
@@ -140,6 +158,9 @@ class Query(graphene.ObjectType):
         precio_max=graphene.Float(),
         search=graphene.String(),
         tipo=graphene.Argument(ProductoTipoEnum),
+        user_lat=graphene.Float(),
+        user_lng=graphene.Float(),
+        radio_km=graphene.Float(),
     )
     store_product = graphene.Field(
         ProductoTiendaType,
@@ -177,6 +198,9 @@ class Query(graphene.ObjectType):
         precio_max: Optional[float] = None,
         search: Optional[str] = None,
         tipo: Optional[ProductoTipoEnum] = None,
+        user_lat: Optional[float] = None,
+        user_lng: Optional[float] = None,
+        radio_km: Optional[float] = None,
     ):
         scope_value = _normalize_scope(scope, ProductScopeEnum, ProductScopeEnum.ALL.value)
         queryset: QuerySet[ProductoTienda] = ProductoTienda.objects.select_related(
@@ -222,6 +246,31 @@ class Query(graphene.ObjectType):
                 queryset = queryset.filter(
                     Q(nombre__icontains=term) | Q(descripcion__icontains=term)
                 )
+
+        distance_active = (
+            user_lat is not None and user_lng is not None and radio_km is not None
+        )
+        if distance_active:
+            if radio_km <= 0:
+                raise GraphQLError("radio_km debe ser mayor a cero")
+            queryset = queryset.filter(
+                tienda__ubicacion_lat__isnull=False,
+                tienda__ubicacion_lng__isnull=False,
+            )
+            productos = list(queryset)
+            filtered = []
+            for producto in productos:
+                t_lat = producto.tienda.ubicacion_lat
+                t_lng = producto.tienda.ubicacion_lng
+                distancia = _haversine_km(
+                    float(user_lat),
+                    float(user_lng),
+                    float(t_lat),
+                    float(t_lng),
+                )
+                if distancia <= radio_km:
+                    filtered.append(producto)
+            return filtered
 
         return list(queryset)
 
@@ -618,6 +667,40 @@ class SetDriverStatus(graphene.Mutation):
         return SetDriverStatus(profile=profile)
 
 
+class UpdateTiendaUbicacion(graphene.Mutation):
+    class Arguments:
+        lat = graphene.Float(required=True)
+        lng = graphene.Float(required=True)
+
+    tienda = graphene.Field("store.graphql.types.TiendaType")
+
+    @staticmethod
+    def mutate(root, info, lat: float, lng: float):
+        user = info.context.user
+        if not user or not user.is_authenticated:
+            raise GraphQLError("Autenticación requerida")
+        if getattr(user, "rol", None) != Usuario.ES_TIENDA:
+            raise GraphQLError("Solo las tiendas pueden actualizar su ubicación")
+
+        if not (-90.0 <= lat <= 90.0):
+            raise GraphQLError("lat fuera de rango")
+        if not (-180.0 <= lng <= 180.0):
+            raise GraphQLError("lng fuera de rango")
+
+        try:
+            tienda = Tienda.objects.get(usuario=user)
+        except Tienda.DoesNotExist as exc:
+            raise GraphQLError("La tienda del usuario no existe") from exc
+
+        tienda.ubicacion_lat = Decimal(str(lat))
+        tienda.ubicacion_lng = Decimal(str(lng))
+        tienda.ubicacion_actualizada = timezone.now()
+        tienda.save(
+            update_fields=["ubicacion_lat", "ubicacion_lng", "ubicacion_actualizada"]
+        )
+        return UpdateTiendaUbicacion(tienda=tienda)
+
+
 class CreateServiceRequest(graphene.Mutation):
     class Arguments:
         tipo = graphene.Argument(ServiceRequestTypeEnum, required=True)
@@ -777,14 +860,111 @@ class UpdateServiceRequestStatus(graphene.Mutation):
         return UpdateServiceRequestStatus(service_request=servicio)
 
 
+class GoogleLogin(graphene.Mutation):
+    class Arguments:
+        id_token = graphene.String(required=True)
+
+    access_token = graphene.String()
+    refresh_token = graphene.String()
+    user = graphene.Field(UsuarioType)
+    is_new_user = graphene.Boolean()
+    requires_role_selection = graphene.Boolean()
+
+    @staticmethod
+    def mutate(root, info, id_token: str):
+        try:
+            from google.oauth2 import id_token as google_id_token
+            from google.auth.transport import requests as google_requests
+        except ImportError as exc:
+            raise GraphQLError(
+                "google-auth no está instalado en el backend"
+            ) from exc
+
+        client_id = getattr(settings, "GOOGLE_WEB_CLIENT_ID", "")
+        if not client_id:
+            raise GraphQLError("GOOGLE_WEB_CLIENT_ID no configurado en el backend")
+
+        try:
+            id_info = google_id_token.verify_oauth2_token(
+                id_token, google_requests.Request(), client_id
+            )
+        except ValueError as exc:
+            raise GraphQLError(f"Token de Google inválido: {exc}") from exc
+
+        email = (id_info.get("email") or "").strip().lower()
+        if not email:
+            raise GraphQLError("El token de Google no contiene email")
+        if not id_info.get("email_verified", False):
+            raise GraphQLError("El email de Google no está verificado")
+
+        first_name = id_info.get("given_name") or ""
+        last_name = id_info.get("family_name") or ""
+
+        try:
+            user = Usuario.objects.get(email=email)
+            is_new_user = False
+        except Usuario.DoesNotExist:
+            username_base = email.split("@")[0][:140] or "usuario"
+            username = username_base
+            suffix = 0
+            while Usuario.objects.filter(username=username).exists():
+                suffix += 1
+                username = f"{username_base}{suffix}"[:150]
+            user = Usuario.objects.create_user(
+                username=username,
+                email=email,
+                password=get_random_string(32),
+                first_name=first_name,
+                last_name=last_name,
+            )
+            is_new_user = True
+
+        if not user.is_active:
+            raise GraphQLError("La cuenta está inactiva")
+
+        refresh = RefreshToken.for_user(user)
+        return GoogleLogin(
+            access_token=str(refresh.access_token),
+            refresh_token=str(refresh),
+            user=user,
+            is_new_user=is_new_user,
+            requires_role_selection=is_new_user,
+        )
+
+
+class UpdateMyRole(graphene.Mutation):
+    class Arguments:
+        rol = graphene.Argument(UsuarioRolEnum, required=True)
+
+    user = graphene.Field(UsuarioType)
+
+    @staticmethod
+    def mutate(root, info, rol):
+        user = info.context.user
+        if not user or not user.is_authenticated:
+            raise GraphQLError("Autenticación requerida")
+
+        rol_value = rol.value if hasattr(rol, "value") else rol
+        valid_roles = {choice for choice, _ in Usuario.ROLES}
+        if rol_value not in valid_roles:
+            raise GraphQLError("Rol inválido")
+
+        user.rol = rol_value
+        user.save(update_fields=["rol"])
+        return UpdateMyRole(user=user)
+
+
 class Mutation(graphene.ObjectType):
     login = Login.Field()
+    google_login = GoogleLogin.Field()
+    update_my_role = UpdateMyRole.Field()
     create_store_order = CreateStoreOrder.Field()
     update_store_order_status = UpdateStoreOrderStatus.Field()
     create_store_order_review = CreateStoreOrderReview.Field()
     create_store_order_seller_review = CreateStoreOrderSellerReview.Field()
     register_driver = RegisterDriver.Field()
     set_driver_status = SetDriverStatus.Field()
+    update_tienda_ubicacion = UpdateTiendaUbicacion.Field()
     create_service_request = CreateServiceRequest.Field()
     assign_service_request = AssignServiceRequest.Field()
     update_service_request_status = UpdateServiceRequestStatus.Field()
