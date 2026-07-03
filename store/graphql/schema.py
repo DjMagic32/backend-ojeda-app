@@ -993,6 +993,8 @@ class CompleteMyProfile(graphene.Mutation):
         direccion_tienda = graphene.String()
         telefono_tienda = graphene.String()
         informacion_fiscal = graphene.String()
+        ubicacion_lat = graphene.Float()
+        ubicacion_lng = graphene.Float()
 
     user = graphene.Field(UsuarioType)
 
@@ -1012,6 +1014,8 @@ class CompleteMyProfile(graphene.Mutation):
         direccion_tienda: Optional[str] = None,
         telefono_tienda: Optional[str] = None,
         informacion_fiscal: Optional[str] = None,
+        ubicacion_lat: Optional[float] = None,
+        ubicacion_lng: Optional[float] = None,
     ):
         user = info.context.user
         if not user or not user.is_authenticated:
@@ -1071,7 +1075,7 @@ class CompleteMyProfile(graphene.Mutation):
         user.save()
 
         if rol_value == Usuario.ES_TIENDA:
-            Tienda.objects.get_or_create(
+            tienda, _created = Tienda.objects.get_or_create(
                 usuario=user,
                 defaults={
                     "nombre": nombre_tienda,
@@ -1080,6 +1084,17 @@ class CompleteMyProfile(graphene.Mutation):
                     "informacion_fiscal": (informacion_fiscal or "").strip() or None,
                 },
             )
+            if ubicacion_lat is not None and ubicacion_lng is not None:
+                tienda.ubicacion_lat = Decimal(str(ubicacion_lat))
+                tienda.ubicacion_lng = Decimal(str(ubicacion_lng))
+                tienda.ubicacion_actualizada = timezone.now()
+                tienda.save(
+                    update_fields=[
+                        "ubicacion_lat",
+                        "ubicacion_lng",
+                        "ubicacion_actualizada",
+                    ]
+                )
 
         return CompleteMyProfile(user=user)
 

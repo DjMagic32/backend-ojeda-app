@@ -97,6 +97,7 @@ class CreateUserView(generics.GenericAPIView):
             genero=data.get('genero', None),  # Agregamos el género
             edad=data.get('edad', None),  # Agregamos la edad
             cedula_pasaporte=data.get('cedula_pasaporte', None),  # Agregamos la cédula/pasaporte
+            ingresos_minimos_mensuales=data.get('ingresos_minimos_mensuales') or None,
         )
         usuario.set_password(data['password'])  # Hasheamos la contraseña
         usuario.save()  # Guardamos el usuario en la base de datos
@@ -105,11 +106,16 @@ class CreateUserView(generics.GenericAPIView):
         if usuario.rol == Usuario.ES_TIENDA:
             tienda_data = {
                 'usuario': usuario.id,
-                'nombre': data.get('nombre_tienda', ''),
-                'direccion': data.get('direccion', ''),
-                'telefono': data.get('telefono_tienda', ''),
-                'informacion_fiscal': data.get('informacion_fiscal', ''),
+                'nombre': data.get('nombre_tienda') or '',
+                'direccion': data.get('direccion') or '',
+                'telefono': data.get('telefono_tienda') or '',
+                'informacion_fiscal': data.get('informacion_fiscal') or '',
+                'ubicacion_lat': data.get('ubicacion_lat'),
+                'ubicacion_lng': data.get('ubicacion_lng'),
             }
+            if tienda_data['ubicacion_lat'] is not None and tienda_data['ubicacion_lng'] is not None:
+                from django.utils import timezone
+                tienda_data['ubicacion_actualizada'] = timezone.now()
             tienda_serializer = TiendaSerializer(data=tienda_data)
             if tienda_serializer.is_valid():
                 tienda_serializer.save()

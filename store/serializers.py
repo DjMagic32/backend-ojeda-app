@@ -127,10 +127,24 @@ class RegisterUserSerializer(serializers.Serializer):
     foto_identificacion = serializers.FileField(
         required=False, allow_null=True, use_url=False
     )
-    nombre_tienda = serializers.CharField(required=False, allow_blank=True)
-    direccion = serializers.CharField(required=False, allow_blank=True)
-    telefono_tienda = serializers.CharField(required=False, allow_blank=True)
-    informacion_fiscal = serializers.CharField(required=False, allow_blank=True)
+    nombre_tienda = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
+    direccion = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
+    telefono_tienda = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
+    informacion_fiscal = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
+    ubicacion_lat = serializers.DecimalField(
+        max_digits=9, decimal_places=6, required=False, allow_null=True
+    )
+    ubicacion_lng = serializers.DecimalField(
+        max_digits=9, decimal_places=6, required=False, allow_null=True
+    )
     ingresos_minimos_mensuales = serializers.CharField(
         required=False, allow_blank=True, allow_null=True
     )
