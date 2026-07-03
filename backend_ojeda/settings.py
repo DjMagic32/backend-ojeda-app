@@ -9,8 +9,9 @@ https://docs.djangoproject.com/en/5.1/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.1/ref/settings/
 """
-from decouple import config
+from decouple import Csv, config
 import os
+from urllib.parse import unquote, urlparse
 
 
 from pathlib import Path
@@ -20,17 +21,30 @@ from datetime import timedelta
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
+def clean_env_list(values):
+    return [value.strip() for value in values if value and value.strip()]
+
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-8a_h)l=(3^qv&ux^7mh#ckvfcy*1q0^55s3qmul*x25l8j*01+'
+SECRET_KEY = config('DJANGO_SECRET_KEY', default='django-insecure-change-me')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = config('DJANGO_DEBUG', default=True, cast=bool)
 
-ALLOWED_HOSTS = ['0.0.0.0', 'localhost', '127.0.0.1', "*"]
-#ALLOWED_HOSTS = ['*']
+default_allowed_hosts = ['0.0.0.0', 'localhost', '127.0.0.1']
+ALLOWED_HOSTS = config(
+    'DJANGO_ALLOWED_HOSTS',
+    default=','.join(default_allowed_hosts),
+    cast=Csv(),
+)
+ALLOWED_HOSTS = clean_env_list(ALLOWED_HOSTS)
+
+railway_public_domain = config('RAILWAY_PUBLIC_DOMAIN', default='').strip()
+if railway_public_domain:
+    ALLOWED_HOSTS.append(railway_public_domain)
 
 CSRF_TRUSTED_ORIGINS = [
     # Permite acceder vía túneles de ngrok sin disparar el chequeo de origen
@@ -38,6 +52,11 @@ CSRF_TRUSTED_ORIGINS = [
     # Permite subdominios temporales de Cloudflare Tunnel
     'https://*.trycloudflare.com',
 ]
+CSRF_TRUSTED_ORIGINS.extend(
+    clean_env_list(config('DJANGO_CSRF_TRUSTED_ORIGINS', default='', cast=Csv()))
+)
+if railway_public_domain:
+    CSRF_TRUSTED_ORIGINS.append(f'https://{railway_public_domain}')
 
 MAPBOX_ACCESS_TOKEN = config('MAPBOX_TOKEN', default=None)
 GOOGLE_WEB_CLIENT_ID = config('GOOGLE_WEB_CLIENT_ID', default='')
@@ -65,10 +84,10 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
-    # Deshabilitado temporalmente en desarrollo para evitar bloqueos CSRF
-    # 'django.middleware.csrf.CsrfViewMiddleware',
+    'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
@@ -117,19 +136,44 @@ EXPO_PUSH_DISABLED = config('EXPO_PUSH_DISABLED', default=False, cast=bool)
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
 
 
-DB_ENGINE = config('DJANGO_DB_ENGINE', default='sqlite')
-
-if DB_ENGINE == 'postgresql':
-    DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.postgresql',
-            'NAME': config('POSTGRES_DB', default='mydatabase'),
-            'USER': config('POSTGRES_USER', default='myuser'),
-            'PASSWORD': config('POSTGRES_PASSWORD', default='mypassword'),
-            'HOST': config('POSTGRES_HOST', default='localhost'),
-            'PORT': config('POSTGRES_PORT', default=5432),
-        }
+def postgres_database_config():
+    return {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': config('POSTGRES_DB', default=config('PGDATABASE', default='mydatabase')),
+        'USER': config('POSTGRES_USER', default=config('PGUSER', default='myuser')),
+        'PASSWORD': config('POSTGRES_PASSWORD', default=config('PGPASSWORD', default='mypassword')),
+        'HOST': config('POSTGRES_HOST', default=config('PGHOST', default='localhost')),
+        'PORT': config('POSTGRES_PORT', default=config('PGPORT', default=5432), cast=int),
+        'CONN_MAX_AGE': config('DJANGO_DB_CONN_MAX_AGE', default=60, cast=int),
     }
+
+
+def database_config_from_url(database_url):
+    parsed = urlparse(database_url)
+    if parsed.scheme not in {'postgres', 'postgresql'}:
+        raise ValueError(f'Unsupported DATABASE_URL scheme: {parsed.scheme}')
+
+    return {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': parsed.path.lstrip('/'),
+        'USER': unquote(parsed.username or ''),
+        'PASSWORD': unquote(parsed.password or ''),
+        'HOST': parsed.hostname or 'localhost',
+        'PORT': parsed.port or 5432,
+        'CONN_MAX_AGE': config('DJANGO_DB_CONN_MAX_AGE', default=60, cast=int),
+    }
+
+
+DATABASE_URL = config('DATABASE_URL', default='').strip()
+DB_ENGINE = config('DJANGO_DB_ENGINE', default='sqlite').strip().lower()
+postgres_requested = DB_ENGINE == 'postgresql' or bool(
+    config('POSTGRES_HOST', default='').strip() or config('PGHOST', default='').strip()
+)
+
+if DATABASE_URL:
+    DATABASES = {'default': database_config_from_url(DATABASE_URL)}
+elif postgres_requested:
+    DATABASES = {'default': postgres_database_config()}
 else:  # Por defecto, usa SQLite
     DATABASES = {
         'default': {
@@ -207,7 +251,7 @@ GRAPHENE = {
 
 LANGUAGE_CODE = 'en-us'
 
-TIME_ZONE = 'UTC'
+TIME_ZONE = config('DJANGO_TIME_ZONE', default='UTC')
 
 USE_I18N = True
 
@@ -219,9 +263,25 @@ STATICFILES_DIRS = [
 
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
+STORAGES = {
+    'default': {
+        'BACKEND': 'django.core.files.storage.FileSystemStorage',
+    },
+    'staticfiles': {
+        'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage',
+    },
+}
 
 MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'
+MEDIA_ROOT = Path(config('DJANGO_MEDIA_ROOT', default=str(BASE_DIR / 'media')))
+SERVE_MEDIA = config('DJANGO_SERVE_MEDIA', default=DEBUG, cast=bool)
+
+USE_X_FORWARDED_HOST = True
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+if not DEBUG:
+    CSRF_COOKIE_SECURE = True
+    SESSION_COOKIE_SECURE = True
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
