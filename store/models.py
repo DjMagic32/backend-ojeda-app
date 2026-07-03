@@ -36,6 +36,8 @@ class Usuario(AbstractUser):
     ingresos_minimos_mensuales = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     es_conductor = models.BooleanField(default=False)
     avatar = models.ImageField(upload_to='avatars/', blank=True, null=True)
+    # False para usuarios creados vía Google que aún no completan el formulario de registro.
+    registro_completo = models.BooleanField(default=True)
 
     def __str__(self):
         return f"{self.username} ({self.rol})"

@@ -938,6 +938,7 @@ class GoogleLogin(graphene.Mutation):
                 password=get_random_string(32),
                 first_name=first_name,
                 last_name=last_name,
+                registro_completo=False,
             )
             is_new_user = True
 
@@ -950,7 +951,7 @@ class GoogleLogin(graphene.Mutation):
             refresh_token=str(refresh),
             user=user,
             is_new_user=is_new_user,
-            requires_role_selection=is_new_user,
+            requires_role_selection=not user.registro_completo,
         )
 
 
@@ -976,10 +977,118 @@ class UpdateMyRole(graphene.Mutation):
         return UpdateMyRole(user=user)
 
 
+class CompleteMyProfile(graphene.Mutation):
+    """Completa el registro de un usuario creado vía Google (rol + datos requeridos)."""
+
+    class Arguments:
+        rol = graphene.Argument(UsuarioRolEnum, required=True)
+        telefono = graphene.String(required=True)
+        first_name = graphene.String()
+        last_name = graphene.String()
+        cedula_pasaporte = graphene.String()
+        edad = graphene.Int()
+        genero = graphene.String()
+        ingresos_minimos_mensuales = graphene.Float()
+        nombre_tienda = graphene.String()
+        direccion_tienda = graphene.String()
+        telefono_tienda = graphene.String()
+        informacion_fiscal = graphene.String()
+
+    user = graphene.Field(UsuarioType)
+
+    @staticmethod
+    def mutate(
+        root,
+        info,
+        rol,
+        telefono: str,
+        first_name: Optional[str] = None,
+        last_name: Optional[str] = None,
+        cedula_pasaporte: Optional[str] = None,
+        edad: Optional[int] = None,
+        genero: Optional[str] = None,
+        ingresos_minimos_mensuales: Optional[float] = None,
+        nombre_tienda: Optional[str] = None,
+        direccion_tienda: Optional[str] = None,
+        telefono_tienda: Optional[str] = None,
+        informacion_fiscal: Optional[str] = None,
+    ):
+        user = info.context.user
+        if not user or not user.is_authenticated:
+            raise GraphQLError("Autenticación requerida")
+
+        rol_value = rol.value if hasattr(rol, "value") else rol
+        valid_roles = {choice for choice, _ in Usuario.ROLES}
+        if rol_value not in valid_roles:
+            raise GraphQLError("Rol inválido")
+
+        telefono = (telefono or "").strip()
+        cedula = (cedula_pasaporte or "").strip()
+        nombre_tienda = (nombre_tienda or "").strip()
+        direccion_tienda = (direccion_tienda or "").strip()
+
+        if not telefono:
+            raise GraphQLError("El teléfono es requerido")
+        if rol_value in (Usuario.ES_TIENDA, Usuario.ES_CONDUCTOR) and not cedula:
+            raise GraphQLError("La cédula o pasaporte es requerida para este rol")
+        if rol_value == Usuario.ES_TIENDA:
+            if not nombre_tienda:
+                raise GraphQLError("El nombre de la tienda es requerido")
+            if not direccion_tienda:
+                raise GraphQLError("La dirección de la tienda es requerida")
+
+        if cedula and Usuario.objects.filter(
+            cedula_pasaporte=cedula
+        ).exclude(pk=user.pk).exists():
+            raise GraphQLError("La cédula o pasaporte ya está registrada")
+
+        if genero:
+            genero = genero.strip().upper()
+            valid_generos = {choice for choice, _ in Usuario.GENEROS}
+            if genero not in valid_generos:
+                raise GraphQLError("Género inválido")
+
+        user.rol = rol_value
+        user.telefono = telefono
+        if first_name and first_name.strip():
+            user.first_name = first_name.strip()
+        if last_name and last_name.strip():
+            user.last_name = last_name.strip()
+        if cedula:
+            user.cedula_pasaporte = cedula
+        if edad is not None:
+            user.edad = edad
+        if genero:
+            user.genero = genero
+        if ingresos_minimos_mensuales is not None:
+            try:
+                user.ingresos_minimos_mensuales = Decimal(
+                    str(ingresos_minimos_mensuales)
+                )
+            except InvalidOperation as exc:
+                raise GraphQLError("Ingresos mínimos inválidos") from exc
+        user.registro_completo = True
+        user.save()
+
+        if rol_value == Usuario.ES_TIENDA:
+            Tienda.objects.get_or_create(
+                usuario=user,
+                defaults={
+                    "nombre": nombre_tienda,
+                    "direccion": direccion_tienda,
+                    "telefono": (telefono_tienda or "").strip() or telefono,
+                    "informacion_fiscal": (informacion_fiscal or "").strip() or None,
+                },
+            )
+
+        return CompleteMyProfile(user=user)
+
+
 class Mutation(graphene.ObjectType):
     login = Login.Field()
     google_login = GoogleLogin.Field()
     update_my_role = UpdateMyRole.Field()
+    complete_my_profile = CompleteMyProfile.Field()
     create_store_order = CreateStoreOrder.Field()
     update_store_order_status = UpdateStoreOrderStatus.Field()
     create_store_order_review = CreateStoreOrderReview.Field()

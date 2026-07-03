@@ -180,6 +180,7 @@ class UsuarioType(DjangoObjectType):
             "foto_identificacion",
             "ingresos_minimos_mensuales",
             "es_conductor",
+            "registro_completo",
             "groups",
             "user_permissions",
         )
