@@ -595,6 +595,8 @@ class RegisterDriver(graphene.Mutation):
         vehiculo_placa = graphene.String(required=False)
         vehiculo_color = graphene.String(required=False)
         capacidad_paquetes = graphene.Int(required=False)
+        telefono = graphene.String(required=False)
+        cedula_pasaporte = graphene.String(required=False)
 
     profile = graphene.Field(DriverProfileType)
 
@@ -607,6 +609,8 @@ class RegisterDriver(graphene.Mutation):
         vehiculo_placa: Optional[str] = None,
         vehiculo_color: Optional[str] = None,
         capacidad_paquetes: Optional[int] = None,
+        telefono: Optional[str] = None,
+        cedula_pasaporte: Optional[str] = None,
     ):
         user = info.context.user
         if not user or not user.is_authenticated:
@@ -614,6 +618,22 @@ class RegisterDriver(graphene.Mutation):
 
         if capacidad_paquetes is not None and capacidad_paquetes <= 0:
             raise GraphQLError("La capacidad de paquetes debe ser mayor a cero")
+
+        user_fields_to_update = []
+        if telefono is not None and telefono.strip():
+            user.telefono = telefono.strip()
+            user_fields_to_update.append("telefono")
+        if cedula_pasaporte is not None and cedula_pasaporte.strip():
+            cedula_clean = cedula_pasaporte.strip()
+            if (
+                Usuario.objects
+                .filter(cedula_pasaporte=cedula_clean)
+                .exclude(pk=user.pk)
+                .exists()
+            ):
+                raise GraphQLError("Esa cédula ya está registrada")
+            user.cedula_pasaporte = cedula_clean
+            user_fields_to_update.append("cedula_pasaporte")
 
         profile_defaults = {
             "licencia_numero": licencia_numero,
@@ -629,7 +649,9 @@ class RegisterDriver(graphene.Mutation):
         )
         if not user.es_conductor:
             user.es_conductor = True
-            user.save(update_fields=["es_conductor"])
+            user_fields_to_update.append("es_conductor")
+        if user_fields_to_update:
+            user.save(update_fields=user_fields_to_update)
 
         return RegisterDriver(profile=profile)
 

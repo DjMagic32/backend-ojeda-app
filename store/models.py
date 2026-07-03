@@ -95,6 +95,19 @@ class DriverProfile(models.Model):
     def __str__(self):
         return f"Conductor {self.usuario.email} ({self.estado})"
 
+    @property
+    def is_complete(self) -> bool:
+        usuario = self.usuario
+        required = (
+            self.licencia_numero,
+            self.vehiculo_tipo,
+            self.vehiculo_placa,
+            self.vehiculo_color,
+            usuario.telefono,
+            usuario.cedula_pasaporte,
+        )
+        return all(value not in (None, "") for value in required)
+
 
 class Tienda(models.Model):
     usuario = models.OneToOneField(Usuario, on_delete=models.CASCADE, limit_choices_to={'rol': Usuario.ES_TIENDA})

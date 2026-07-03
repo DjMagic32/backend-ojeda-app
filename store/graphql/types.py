@@ -288,6 +288,7 @@ class StoreOrderSellerReviewType(DjangoObjectType):
 
 class DriverProfileType(DjangoObjectType):
     usuario = graphene.Int()
+    is_complete = graphene.Boolean()
 
     class Meta:
         model = DriverProfile
@@ -307,6 +308,9 @@ class DriverProfileType(DjangoObjectType):
 
     def resolve_usuario(self, info):
         return self.usuario_id
+
+    def resolve_is_complete(self, info):
+        return self.is_complete
 
 
 class ServiceRequestType(DjangoObjectType):

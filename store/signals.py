@@ -1,7 +1,14 @@
 from django.db.models.signals import post_save, pre_save
 from django.dispatch import receiver
 
-from .models import Carrito, Notificacion, StoreOrder, Usuario, Wallet
+from .models import (
+    Carrito,
+    DriverProfile,
+    Notificacion,
+    StoreOrder,
+    Usuario,
+    Wallet,
+)
 from .services.push import send_push_to_user
 from .services.realtime import notify_user
 
@@ -94,3 +101,46 @@ def notificar_orden(sender, instance: StoreOrder, created, **kwargs):
         tipo=Notificacion.TIPO_ORDEN,
         data={'order_id': instance.id, 'estado': instance.estado},
     )
+
+
+@receiver(pre_save, sender=DriverProfile)
+def detectar_cambio_perfil_conductor(sender, instance: DriverProfile, **kwargs):
+    """Guarda el estado previo de is_complete para detectar transiciones."""
+    if not instance.pk:
+        instance._is_complete_previo = False
+        return
+    try:
+        previo = DriverProfile.objects.select_related('usuario').get(pk=instance.pk)
+        instance._is_complete_previo = previo.is_complete
+    except DriverProfile.DoesNotExist:
+        instance._is_complete_previo = False
+
+
+@receiver(post_save, sender=DriverProfile)
+def notificar_perfil_conductor(sender, instance: DriverProfile, created, **kwargs):
+    """Crea notificaciones cuando el conductor termina o le falta el registro."""
+    if created and not instance.is_complete:
+        Notificacion.objects.create(
+            usuario_id=instance.usuario_id,
+            titulo='Completa tu perfil de conductor',
+            mensaje=(
+                'Para empezar a recibir entregas o viajes necesitamos los datos '
+                'de tu vehículo, licencia, teléfono y cédula.'
+            ),
+            tipo=Notificacion.TIPO_GENERAL,
+            data={'action': 'driver_profile_setup'},
+        )
+        return
+
+    previo = getattr(instance, '_is_complete_previo', False)
+    if not previo and instance.is_complete:
+        Notificacion.objects.create(
+            usuario_id=instance.usuario_id,
+            titulo='¡Listo! Tu registro de conductor está completo',
+            mensaje=(
+                'Ya puedes recibir solicitudes de entrega y de taxi. '
+                'Activa tu disponibilidad cuando estés listo para trabajar.'
+            ),
+            tipo=Notificacion.TIPO_GENERAL,
+            data={'action': 'driver_profile_completed'},
+        )
