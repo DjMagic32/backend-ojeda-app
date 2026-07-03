@@ -34,5 +34,5 @@ urlpatterns = [
     path('api/graphql/', JWTGraphQLView.as_view(schema=schema), name='graphql'),
 ]
 
-if settings.DEBUG or settings.SERVE_MEDIA:
+if (settings.DEBUG or settings.SERVE_MEDIA) and not settings.S3_MEDIA_ENABLED:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

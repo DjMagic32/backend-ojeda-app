@@ -25,6 +25,16 @@ def clean_env_list(values):
     return [value.strip() for value in values if value and value.strip()]
 
 
+def first_env_value(*names, default=''):
+    for name in names:
+        value = config(name, default='')
+        if isinstance(value, str):
+            value = value.strip()
+        if value:
+            return value
+    return default
+
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
 
@@ -79,6 +89,7 @@ INSTALLED_APPS = [
     'rest_framework_swagger',
     'rest_framework_simplejwt',
     'rest_framework',
+    'storages',
     'store',
 ]
 
@@ -294,18 +305,58 @@ STATICFILES_DIRS = [
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 STATIC_URL = '/static/'
-STORAGES = {
-    'default': {
-        'BACKEND': 'django.core.files.storage.FileSystemStorage',
-    },
-    'staticfiles': {
-        'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage',
-    },
-}
+MEDIA_BUCKET_NAME = first_env_value('AWS_STORAGE_BUCKET_NAME', 'BUCKET')
+MEDIA_BUCKET_ACCESS_KEY = first_env_value('AWS_ACCESS_KEY_ID', 'ACCESS_KEY_ID')
+MEDIA_BUCKET_SECRET_KEY = first_env_value('AWS_SECRET_ACCESS_KEY', 'SECRET_ACCESS_KEY')
+MEDIA_BUCKET_ENDPOINT = first_env_value('AWS_S3_ENDPOINT_URL', 'ENDPOINT')
+MEDIA_BUCKET_REGION = first_env_value('AWS_S3_REGION_NAME', 'REGION', default='auto')
+MEDIA_BUCKET_LOCATION = first_env_value('AWS_MEDIA_LOCATION', default='media')
+MEDIA_BUCKET_ADDRESSING_STYLE = first_env_value('AWS_S3_ADDRESSING_STYLE', default='virtual')
+S3_MEDIA_ENABLED = config(
+    'S3_MEDIA_ENABLED',
+    default='true'
+    if MEDIA_BUCKET_NAME and MEDIA_BUCKET_ENDPOINT and MEDIA_BUCKET_ACCESS_KEY and MEDIA_BUCKET_SECRET_KEY
+    else 'false',
+    cast=bool,
+)
 
-MEDIA_URL = '/media/'
-MEDIA_ROOT = Path(config('DJANGO_MEDIA_ROOT', default=str(BASE_DIR / 'media')))
-SERVE_MEDIA = config('DJANGO_SERVE_MEDIA', default=DEBUG, cast=bool)
+if S3_MEDIA_ENABLED:
+    STORAGES = {
+        'default': {
+            'BACKEND': 'storages.backends.s3.S3Storage',
+            'OPTIONS': {
+                'bucket_name': MEDIA_BUCKET_NAME,
+                'access_key': MEDIA_BUCKET_ACCESS_KEY,
+                'secret_key': MEDIA_BUCKET_SECRET_KEY,
+                'endpoint_url': MEDIA_BUCKET_ENDPOINT,
+                'region_name': MEDIA_BUCKET_REGION,
+                'default_acl': None,
+                'querystring_auth': config('AWS_QUERYSTRING_AUTH', default=True, cast=bool),
+                'querystring_expire': config('AWS_QUERYSTRING_EXPIRE', default=3600, cast=int),
+                'file_overwrite': config('AWS_S3_FILE_OVERWRITE', default=False, cast=bool),
+                'location': MEDIA_BUCKET_LOCATION.strip('/'),
+                'addressing_style': MEDIA_BUCKET_ADDRESSING_STYLE or None,
+            },
+        },
+        'staticfiles': {
+            'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage',
+        },
+    }
+    MEDIA_URL = config('DJANGO_MEDIA_URL', default='/media/')
+    MEDIA_ROOT = BASE_DIR / 'media'
+    SERVE_MEDIA = False
+else:
+    STORAGES = {
+        'default': {
+            'BACKEND': 'django.core.files.storage.FileSystemStorage',
+        },
+        'staticfiles': {
+            'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage',
+        },
+    }
+    MEDIA_URL = '/media/'
+    MEDIA_ROOT = Path(config('DJANGO_MEDIA_ROOT', default=str(BASE_DIR / 'media')))
+    SERVE_MEDIA = config('DJANGO_SERVE_MEDIA', default=DEBUG, cast=bool)
 
 USE_X_FORWARDED_HOST = True
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
