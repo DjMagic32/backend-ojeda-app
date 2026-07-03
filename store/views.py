@@ -324,14 +324,13 @@ class ProductoTiendaViewSet(viewsets.ModelViewSet):
 class StoreOrderViewSet(viewsets.ModelViewSet):
     serializer_class = StoreOrderSerializer
     permission_classes = [IsAuthenticated]
+    queryset = StoreOrder.objects.select_related('producto', 'producto__tienda', 'usuario')
 
     def get_queryset(self):
         user = self.request.user
         scope = self.request.query_params.get('scope')
 
-        base_queryset = StoreOrder.objects.select_related(
-            'producto', 'producto__tienda', 'usuario'
-        )
+        base_queryset = self.queryset
 
         if scope == 'store' and getattr(user, 'rol', None) == Usuario.ES_TIENDA:
             return base_queryset.filter(producto__tienda__usuario=user)
@@ -563,6 +562,7 @@ class ConversationViewSet(viewsets.ModelViewSet):
     serializer_class = ConversationSerializer
     permission_classes = [IsAuthenticated]
     http_method_names = ['get', 'post', 'delete', 'head', 'options']
+    queryset = Conversation.objects.all()
 
     def get_queryset(self):
         return (
@@ -604,7 +604,7 @@ class ConversationViewSet(viewsets.ModelViewSet):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['get', 'post'], url_path='messages')
-    def messages(self, request, pk=None):
+    def messages(self, request, pk: int | None = None):
         conversation = self.get_object()
         if request.method == 'GET':
             qs = conversation.mensajes.select_related('autor').order_by('creado')
@@ -647,7 +647,7 @@ class ConversationViewSet(viewsets.ModelViewSet):
         return Response(data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['post'], url_path='read')
-    def mark_read(self, request, pk=None):
+    def mark_read(self, request, pk: int | None = None):
         conversation = self.get_object()
         updated = conversation.mensajes.filter(leido=False).exclude(autor=request.user).update(leido=True)
         if updated:

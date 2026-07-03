@@ -238,6 +238,36 @@ REST_FRAMEWORK = {
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
 }
 
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'Ojeda Backend API',
+    'DESCRIPTION': (
+        'Documentacion interactiva del backend.\n\n'
+        'Autenticacion:\n'
+        '- Obtiene un JWT en `/api/token/`.\n'
+        '- En Swagger usa el boton `Authorize` con `Bearer <token>`.'
+    ),
+    'VERSION': '1.0.0',
+    'SERVE_INCLUDE_SCHEMA': False,
+    'SERVE_PERMISSIONS': ['rest_framework.permissions.AllowAny'],
+    'SERVE_AUTHENTICATION': [],
+    'COMPONENT_SPLIT_REQUEST': True,
+    'SWAGGER_UI_SETTINGS': {
+        'deepLinking': True,
+        'displayRequestDuration': True,
+        'persistAuthorization': True,
+    },
+    'SECURITY': [{'BearerAuth': []}],
+    'APPEND_COMPONENTS': {
+        'securitySchemes': {
+            'BearerAuth': {
+                'type': 'http',
+                'scheme': 'bearer',
+                'bearerFormat': 'JWT',
+            }
+        }
+    },
+}
+
 AUTH_USER_MODEL = 'store.Usuario'  # Asegúrate de que esto esté configurado
 
 

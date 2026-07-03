@@ -1,5 +1,7 @@
 from decimal import Decimal
+from typing import Any
 
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 from .models import (
     Producto,
@@ -54,6 +56,15 @@ class ItemCarritoSerializer(serializers.ModelSerializer):
         model = ItemCarrito
         fields = ['id', 'producto_tienda', 'producto_tienda_detalle', 'cantidad', 'subtotal']
 
+
+class ConversationLastMessageSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    contenido = serializers.CharField()
+    autor_id = serializers.IntegerField()
+    creado = serializers.DateTimeField()
+    leido = serializers.BooleanField()
+
+
 class CarritoSerializer(serializers.ModelSerializer):
     items = ItemCarritoSerializer(many=True, read_only=True)
     total = serializers.SerializerMethodField()
@@ -62,7 +73,8 @@ class CarritoSerializer(serializers.ModelSerializer):
         model = Carrito
         fields = ['id', 'usuario', 'items', 'creado', 'total']
 
-    def get_total(self, obj: Carrito):
+    @extend_schema_field(serializers.DecimalField(max_digits=12, decimal_places=2))
+    def get_total(self, obj: Carrito) -> Decimal:
         return sum(item.subtotal for item in obj.items.all())
 
 class PedidoSerializer(serializers.ModelSerializer):
@@ -236,7 +248,8 @@ class ConversationSerializer(serializers.ModelSerializer):
         model = Conversation
         fields = ['id', 'participantes', 'producto', 'ultimo_mensaje', 'no_leidos', 'creado', 'actualizado']
 
-    def get_ultimo_mensaje(self, obj: Conversation):
+    @extend_schema_field(ConversationLastMessageSerializer(allow_null=True))
+    def get_ultimo_mensaje(self, obj: Conversation) -> dict[str, Any] | None:
         msg = obj.mensajes.order_by('-creado').first()
         if not msg:
             return None
