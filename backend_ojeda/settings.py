@@ -62,8 +62,14 @@ CSRF_TRUSTED_ORIGINS = [
     # Permite subdominios temporales de Cloudflare Tunnel
     'https://*.trycloudflare.com',
 ]
+# Django 4+ exige scheme en cada origen; descartamos valores inválidos (ej. "*")
+# que llegan por env para no tumbar el deploy con SystemCheckError 4_0.E001.
 CSRF_TRUSTED_ORIGINS.extend(
-    clean_env_list(config('DJANGO_CSRF_TRUSTED_ORIGINS', default='', cast=Csv()))
+    origin
+    for origin in clean_env_list(
+        config('DJANGO_CSRF_TRUSTED_ORIGINS', default='', cast=Csv())
+    )
+    if origin.startswith(('http://', 'https://'))
 )
 if railway_public_domain:
     CSRF_TRUSTED_ORIGINS.append(f'https://{railway_public_domain}')
