@@ -312,8 +312,9 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 
 STATIC_URL = '/static/'
 
-# Email: si hay EMAIL_HOST configurado usamos SMTP; si no, consola para
-# no tumbar el deploy mientras no existan credenciales.
+# Email: preferimos la API HTTP de Resend (Railway bloquea puertos SMTP
+# salientes). Fallback: SMTP si hay EMAIL_HOST, o consola en dev.
+RESEND_API_KEY = config('RESEND_API_KEY', default='').strip()
 EMAIL_HOST = config('EMAIL_HOST', default='').strip()
 if EMAIL_HOST:
     EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
@@ -321,6 +322,7 @@ if EMAIL_HOST:
     EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='')
     EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
     EMAIL_USE_TLS = config('EMAIL_USE_TLS', default=True, cast=bool)
+    EMAIL_TIMEOUT = 10
 else:
     EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
 DEFAULT_FROM_EMAIL = config(

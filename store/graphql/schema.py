@@ -7,7 +7,7 @@ from graphene import Enum
 from graphql import GraphQLError
 from django.conf import settings
 from django.contrib.auth import authenticate
-from django.core.mail import send_mail
+from store.services.mail import send_app_email
 from django.db.models import Q, QuerySet
 from django.utils import timezone
 from django.utils.crypto import get_random_string
@@ -1145,18 +1145,21 @@ class RequestPasswordReset(graphene.Mutation):
         if user:
             codigo = get_random_string(6, "0123456789")
             PasswordResetCode.objects.create(usuario=user, codigo=codigo)
-            send_mail(
-                subject="TuPlaza – Código para recuperar tu contraseña",
-                message=(
-                    f"Hola {user.first_name or ''}\n\n"
-                    f"Tu código de recuperación es: {codigo}\n\n"
-                    f"Vence en {PasswordResetCode.VALIDEZ_MINUTOS} minutos. "
-                    "Si no solicitaste este código, ignora este correo."
-                ),
-                from_email=None,
-                recipient_list=[user.email],
-                fail_silently=False,
-            )
+            try:
+                send_app_email(
+                    subject="TuPlaza – Código para recuperar tu contraseña",
+                    message=(
+                        f"Hola {user.first_name or ''}\n\n"
+                        f"Tu código de recuperación es: {codigo}\n\n"
+                        f"Vence en {PasswordResetCode.VALIDEZ_MINUTOS} minutos. "
+                        "Si no solicitaste este código, ignora este correo."
+                    ),
+                    recipient=user.email,
+                )
+            except Exception as exc:
+                raise GraphQLError(
+                    "No pudimos enviar el correo. Intenta de nuevo en unos minutos."
+                ) from exc
         return RequestPasswordReset(ok=True)
 
 
