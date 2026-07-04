@@ -1157,8 +1157,11 @@ class RequestPasswordReset(graphene.Mutation):
                     recipient=user.email,
                 )
             except Exception as exc:
+                # Incluimos la causa para poder diagnosticar desde la app,
+                # ya que los logs de Railway no siempre están a mano.
+                causa = exc.__cause__ or exc
                 raise GraphQLError(
-                    "No pudimos enviar el correo. Intenta de nuevo en unos minutos."
+                    f"No pudimos enviar el correo. Detalle: {causa}"
                 ) from exc
         return RequestPasswordReset(ok=True)
 
