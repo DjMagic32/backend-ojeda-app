@@ -1,3 +1,4 @@
+import logging
 from decimal import Decimal, InvalidOperation
 from math import asin, cos, radians, sin, sqrt
 from typing import Iterable, Optional, Type
@@ -12,6 +13,8 @@ from django.db.models import Q, QuerySet
 from django.utils import timezone
 from django.utils.crypto import get_random_string
 from rest_framework_simplejwt.tokens import RefreshToken
+
+logger = logging.getLogger(__name__)
 
 from store.models import (
     DriverProfile,
@@ -1201,6 +1204,25 @@ class ResetPassword(graphene.Mutation):
         user.save(update_fields=["password"])
         reset_code.usado = True
         reset_code.save(update_fields=["usado"])
+
+        # La contraseña ya cambió; si este aviso falla no rompemos el flujo.
+        try:
+            send_app_email(
+                subject="TuPlaza – Tu contraseña fue cambiada",
+                message=(
+                    f"Hola {user.first_name or ''}\n\n"
+                    "Tu contraseña se cambió correctamente. Ya puedes iniciar "
+                    "sesión con tu nueva contraseña.\n\n"
+                    "Si no fuiste tú, solicita de inmediato un nuevo código "
+                    "de recuperación desde la app para proteger tu cuenta."
+                ),
+                recipient=user.email,
+            )
+        except Exception:
+            logger.warning(
+                "No se pudo enviar el aviso de cambio de contraseña a %s",
+                user.email,
+            )
         return ResetPassword(ok=True)
 
 
