@@ -55,3 +55,6 @@ channels-redis==4.2.0
 
 # Google OAuth (id_token verification)
 google-auth==2.35.0
+
+# Email transaccional
+resend==2.13.0
