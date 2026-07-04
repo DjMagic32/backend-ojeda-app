@@ -7,6 +7,7 @@ from graphene import Enum
 from graphql import GraphQLError
 from django.conf import settings
 from django.contrib.auth import authenticate
+from django.core.mail import send_mail
 from django.db.models import Q, QuerySet
 from django.utils import timezone
 from django.utils.crypto import get_random_string
@@ -14,6 +15,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from store.models import (
     DriverProfile,
+    PasswordResetCode,
     ProductoTienda,
     ServiceRequest,
     StoreOrder,
@@ -1099,11 +1101,111 @@ class CompleteMyProfile(graphene.Mutation):
         return CompleteMyProfile(user=user)
 
 
+class DeleteMyAccount(graphene.Mutation):
+    """Desactiva la cuenta del usuario autenticado (soft delete)."""
+
+    class Arguments:
+        password = graphene.String()
+
+    ok = graphene.Boolean()
+
+    @staticmethod
+    def mutate(root, info, password: Optional[str] = None):
+        user = info.context.user
+        if not user or not user.is_authenticated:
+            raise GraphQLError("Autenticación requerida")
+
+        # La confirmación principal es el modal en la app; si el cliente envía
+        # contraseña la verificamos como capa extra (cuentas Google no la conocen).
+        if password and not user.check_password(password):
+            raise GraphQLError("Contraseña incorrecta")
+
+        user.is_active = False
+        user.save(update_fields=["is_active"])
+        return DeleteMyAccount(ok=True)
+
+
+class RequestPasswordReset(graphene.Mutation):
+    """Envía un código OTP de 6 dígitos al correo para recuperar la contraseña."""
+
+    class Arguments:
+        email = graphene.String(required=True)
+
+    ok = graphene.Boolean()
+
+    @staticmethod
+    def mutate(root, info, email: str):
+        email = (email or "").strip().lower()
+        if not email:
+            raise GraphQLError("El correo es requerido")
+
+        user = Usuario.objects.filter(email=email, is_active=True).first()
+        # Respondemos ok aunque el correo no exista para no revelar
+        # qué cuentas están registradas.
+        if user:
+            codigo = get_random_string(6, "0123456789")
+            PasswordResetCode.objects.create(usuario=user, codigo=codigo)
+            send_mail(
+                subject="TuPlaza – Código para recuperar tu contraseña",
+                message=(
+                    f"Hola {user.first_name or ''}\n\n"
+                    f"Tu código de recuperación es: {codigo}\n\n"
+                    f"Vence en {PasswordResetCode.VALIDEZ_MINUTOS} minutos. "
+                    "Si no solicitaste este código, ignora este correo."
+                ),
+                from_email=None,
+                recipient_list=[user.email],
+                fail_silently=False,
+            )
+        return RequestPasswordReset(ok=True)
+
+
+class ResetPassword(graphene.Mutation):
+    """Cambia la contraseña usando el código OTP enviado por correo."""
+
+    class Arguments:
+        email = graphene.String(required=True)
+        codigo = graphene.String(required=True)
+        new_password = graphene.String(required=True)
+
+    ok = graphene.Boolean()
+
+    @staticmethod
+    def mutate(root, info, email: str, codigo: str, new_password: str):
+        email = (email or "").strip().lower()
+        codigo = (codigo or "").strip()
+        if len(new_password or "") < 8:
+            raise GraphQLError("La contraseña debe tener al menos 8 caracteres")
+
+        user = Usuario.objects.filter(email=email, is_active=True).first()
+        reset_code = (
+            PasswordResetCode.objects.filter(usuario=user, usado=False).first()
+            if user
+            else None
+        )
+        if not reset_code or not reset_code.esta_vigente():
+            raise GraphQLError("Código inválido o vencido. Solicita uno nuevo.")
+
+        if reset_code.codigo != codigo:
+            reset_code.intentos += 1
+            reset_code.save(update_fields=["intentos"])
+            raise GraphQLError("Código incorrecto.")
+
+        user.set_password(new_password)
+        user.save(update_fields=["password"])
+        reset_code.usado = True
+        reset_code.save(update_fields=["usado"])
+        return ResetPassword(ok=True)
+
+
 class Mutation(graphene.ObjectType):
     login = Login.Field()
     google_login = GoogleLogin.Field()
     update_my_role = UpdateMyRole.Field()
     complete_my_profile = CompleteMyProfile.Field()
+    request_password_reset = RequestPasswordReset.Field()
+    reset_password = ResetPassword.Field()
+    delete_my_account = DeleteMyAccount.Field()
     create_store_order = CreateStoreOrder.Field()
     update_store_order_status = UpdateStoreOrderStatus.Field()
     create_store_order_review = CreateStoreOrderReview.Field()

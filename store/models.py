@@ -611,3 +611,32 @@ class ExpoPushToken(models.Model):
 
     def __str__(self):
         return f"PushToken {self.usuario.email} ({self.token[:12]}…)"
+
+
+class PasswordResetCode(models.Model):
+    """Código OTP de 6 dígitos para recuperación de contraseña."""
+
+    usuario = models.ForeignKey(
+        Usuario,
+        on_delete=models.CASCADE,
+        related_name='password_reset_codes',
+    )
+    codigo = models.CharField(max_length=6)
+    creado = models.DateTimeField(auto_now_add=True)
+    usado = models.BooleanField(default=False)
+    intentos = models.PositiveSmallIntegerField(default=0)
+
+    VALIDEZ_MINUTOS = 15
+    MAX_INTENTOS = 5
+
+    class Meta:
+        ordering = ['-creado']
+
+    def esta_vigente(self) -> bool:
+        from datetime import timedelta
+        if self.usado or self.intentos >= self.MAX_INTENTOS:
+            return False
+        return timezone.now() <= self.creado + timedelta(minutes=self.VALIDEZ_MINUTOS)
+
+    def __str__(self):
+        return f"ResetCode {self.usuario.email} ({'usado' if self.usado else 'activo'})"

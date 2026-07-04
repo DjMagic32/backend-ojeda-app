@@ -311,6 +311,22 @@ STATICFILES_DIRS = [
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 STATIC_URL = '/static/'
+
+# Email: si hay EMAIL_HOST configurado usamos SMTP; si no, consola para
+# no tumbar el deploy mientras no existan credenciales.
+EMAIL_HOST = config('EMAIL_HOST', default='').strip()
+if EMAIL_HOST:
+    EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+    EMAIL_PORT = config('EMAIL_PORT', default=587, cast=int)
+    EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='')
+    EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
+    EMAIL_USE_TLS = config('EMAIL_USE_TLS', default=True, cast=bool)
+else:
+    EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+DEFAULT_FROM_EMAIL = config(
+    'DEFAULT_FROM_EMAIL', default='TuPlaza <no-reply@tuplaza.app>'
+)
+
 MEDIA_BUCKET_NAME = first_env_value('AWS_STORAGE_BUCKET_NAME', 'BUCKET')
 MEDIA_BUCKET_ACCESS_KEY = first_env_value('AWS_ACCESS_KEY_ID', 'ACCESS_KEY_ID')
 MEDIA_BUCKET_SECRET_KEY = first_env_value('AWS_SECRET_ACCESS_KEY', 'SECRET_ACCESS_KEY')
