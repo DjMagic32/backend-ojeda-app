@@ -329,6 +329,28 @@ DEFAULT_FROM_EMAIL = config(
     'DEFAULT_FROM_EMAIL', default='TuPlaza <no-reply@tuplaza.app>'
 )
 
+# Sin esto, los logger.error de la app no llegan a la consola de Railway.
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'simple': {
+            'format': '[{levelname}] {asctime} {name}: {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'simple',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'INFO',
+    },
+}
+
 MEDIA_BUCKET_NAME = first_env_value('AWS_STORAGE_BUCKET_NAME', 'BUCKET')
 MEDIA_BUCKET_ACCESS_KEY = first_env_value('AWS_ACCESS_KEY_ID', 'ACCESS_KEY_ID')
 MEDIA_BUCKET_SECRET_KEY = first_env_value('AWS_SECRET_ACCESS_KEY', 'SECRET_ACCESS_KEY')
