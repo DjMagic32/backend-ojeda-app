@@ -23,6 +23,8 @@ from .views import (
     WalletViewSet,
     WalletActionView,
     CreateUserView,
+    DriverDocumentosView,
+    EmailDisponibleView,
     UsuarioDetalleView,
     UsuarioProfileUpdateView,
     StoreOrderViewSet,
@@ -48,6 +50,8 @@ router.register(r'conversations', ConversationViewSet, basename='conversations')
 urlpatterns = [
     path('', include(router.urls)),
     path('register-user/', CreateUserView.as_view(), name='user-register'),  # Ruta para crear usuarios
+    path('email-disponible/', EmailDisponibleView.as_view(), name='email-disponible'),
+    path('driver-documentos/', DriverDocumentosView.as_view(), name='driver-documentos'),
     path('carrito/', CarritoView.as_view(), name='carrito'),
     path('pedidos/', PedidoView.as_view(), name='pedidos'),
     path('wallet-action/', WalletActionView.as_view(), name='wallet-action'),

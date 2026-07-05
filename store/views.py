@@ -128,6 +128,54 @@ class CreateUserView(generics.GenericAPIView):
         return Response(usuario_serializer.data, status=status.HTTP_201_CREATED)
     
 
+class DriverDocumentosView(generics.GenericAPIView):
+    permission_classes = [IsAuthenticated]
+
+    CAMPOS = ('cedula_foto_frente', 'cedula_foto_reverso', 'licencia_foto')
+
+    @extend_schema(
+        description="Sube las fotos de cédula (frente/reverso) y licencia del conductor.",
+    )
+    def patch(self, request):
+        from store.models import DriverProfile
+
+        profile, _ = DriverProfile.objects.get_or_create(usuario=request.user)
+        recibidos = []
+        for campo in self.CAMPOS:
+            archivo = request.FILES.get(campo)
+            if archivo:
+                setattr(profile, campo, archivo)
+                recibidos.append(campo)
+        if not recibidos:
+            return Response(
+                {'error': 'Envía al menos una foto (cedula_foto_frente, cedula_foto_reverso o licencia_foto).'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        profile.save(update_fields=recibidos + ['actualizado'])
+        return Response({
+            'ok': True,
+            'recibidos': recibidos,
+            'is_complete': profile.is_complete,
+        })
+
+
+class EmailDisponibleView(generics.GenericAPIView):
+    permission_classes = [permissions.AllowAny]
+
+    @extend_schema(
+        description="Indica si un email ya está registrado (para validar en vivo el registro).",
+    )
+    def get(self, request):
+        email = (request.query_params.get('email') or '').strip().lower()
+        if not email:
+            return Response(
+                {'error': 'email es requerido'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        existe = Usuario.objects.filter(email=email).exists()
+        return Response({'email': email, 'disponible': not existe})
+
+
 class UsuarioViewSet(viewsets.ModelViewSet):
     #permission_classes = [IsAuthenticated]
     queryset = Usuario.objects.all()

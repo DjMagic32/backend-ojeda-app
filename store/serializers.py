@@ -120,7 +120,17 @@ class RegisterUserSerializer(serializers.Serializer):
     genero = serializers.ChoiceField(
         choices=Usuario.GENEROS, required=False, allow_blank=True, allow_null=True
     )
-    edad = serializers.IntegerField(required=False, allow_null=True)
+    edad = serializers.IntegerField(
+        required=False,
+        allow_null=True,
+        min_value=18,
+        max_value=100,
+        error_messages={
+            'min_value': 'Debes ser mayor de 18 años para registrarte.',
+            'max_value': 'Ingresa una edad válida.',
+            'invalid': 'Ingresa una edad válida (solo números).',
+        },
+    )
     cedula_pasaporte = serializers.CharField(
         required=False, allow_blank=True, allow_null=True
     )

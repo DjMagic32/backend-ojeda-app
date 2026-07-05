@@ -92,6 +92,15 @@ class DriverProfile(models.Model):
         blank=True,
         null=True,
     )
+    cedula_foto_frente = models.ImageField(
+        upload_to='conductores/cedulas/', blank=True, null=True
+    )
+    cedula_foto_reverso = models.ImageField(
+        upload_to='conductores/cedulas/', blank=True, null=True
+    )
+    licencia_foto = models.ImageField(
+        upload_to='conductores/licencias/', blank=True, null=True
+    )
     actualizado = models.DateTimeField(auto_now=True)
 
     def __str__(self):
@@ -108,7 +117,11 @@ class DriverProfile(models.Model):
             usuario.telefono,
             usuario.cedula_pasaporte,
         )
-        return all(value not in (None, "") for value in required)
+        campos_ok = all(value not in (None, "") for value in required)
+        fotos_ok = bool(
+            self.cedula_foto_frente and self.cedula_foto_reverso and self.licencia_foto
+        )
+        return campos_ok and fotos_ok
 
 
 class Tienda(models.Model):

@@ -290,6 +290,9 @@ class StoreOrderSellerReviewType(DjangoObjectType):
 class DriverProfileType(DjangoObjectType):
     usuario = graphene.Int()
     is_complete = graphene.Boolean()
+    cedula_foto_frente = graphene.String()
+    cedula_foto_reverso = graphene.String()
+    licencia_foto = graphene.String()
 
     class Meta:
         model = DriverProfile
@@ -312,6 +315,15 @@ class DriverProfileType(DjangoObjectType):
 
     def resolve_is_complete(self, info):
         return self.is_complete
+
+    def resolve_cedula_foto_frente(self, info):
+        return self.cedula_foto_frente.url if self.cedula_foto_frente else None
+
+    def resolve_cedula_foto_reverso(self, info):
+        return self.cedula_foto_reverso.url if self.cedula_foto_reverso else None
+
+    def resolve_licencia_foto(self, info):
+        return self.licencia_foto.url if self.licencia_foto else None
 
 
 class ServiceRequestType(DjangoObjectType):

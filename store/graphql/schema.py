@@ -622,7 +622,19 @@ class RegisterDriver(graphene.Mutation):
             raise GraphQLError("Autenticación requerida")
 
         if capacidad_paquetes is not None and capacidad_paquetes <= 0:
-            raise GraphQLError("La capacidad de paquetes debe ser mayor a cero")
+            raise GraphQLError("La capacidad debe ser mayor a cero.")
+        if capacidad_paquetes is not None and capacidad_paquetes > 50:
+            raise GraphQLError(
+                "La capacidad máxima permitida es 50 paquetes o pasajeros."
+            )
+        if vehiculo_color is not None and len(vehiculo_color.strip()) > 30:
+            raise GraphQLError(
+                "El color del vehículo no puede superar los 30 caracteres."
+            )
+        if vehiculo_placa is not None and len(vehiculo_placa.strip()) > 20:
+            raise GraphQLError(
+                "La placa del vehículo no puede superar los 20 caracteres."
+            )
 
         user_fields_to_update = []
         if telefono is not None and telefono.strip():
@@ -646,7 +658,6 @@ class RegisterDriver(graphene.Mutation):
             "vehiculo_placa": vehiculo_placa,
             "vehiculo_color": vehiculo_color,
             "capacidad_paquetes": capacidad_paquetes or 1,
-            "estado": DriverProfile.ESTADO_DISPONIBLE,
         }
         profile, _ = DriverProfile.objects.update_or_create(
             usuario=user,
@@ -684,6 +695,15 @@ class SetDriverStatus(graphene.Mutation):
         allowed = {choice[0] for choice in DriverProfile.ESTADOS}
         if normalized_estado not in allowed:
             raise GraphQLError("Estado de conductor inválido")
+
+        if (
+            normalized_estado != DriverProfile.ESTADO_OFFLINE
+            and not profile.is_complete
+        ):
+            raise GraphQLError(
+                "Completa tu perfil de conductor (datos, vehículo y fotos de "
+                "tus documentos) antes de activarte."
+            )
 
         profile.estado = normalized_estado
         if ubicacion_lat is not None:
