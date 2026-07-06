@@ -162,6 +162,7 @@ class Query(graphene.ObjectType):
     store_products = graphene.List(
         ProductoTiendaType,
         scope=graphene.Argument(ProductScopeEnum, default_value=ProductScopeEnum.ALL),
+        tienda_id=graphene.ID(),
         categoria_id=graphene.ID(),
         precio_min=graphene.Float(),
         precio_max=graphene.Float(),
@@ -202,6 +203,7 @@ class Query(graphene.ObjectType):
         self,
         info,
         scope=ProductScopeEnum.ALL,
+        tienda_id: Optional[int] = None,
         categoria_id: Optional[int] = None,
         precio_min: Optional[float] = None,
         precio_max: Optional[float] = None,
@@ -229,6 +231,9 @@ class Query(graphene.ObjectType):
             except Tienda.DoesNotExist:
                 return []
             queryset = queryset.filter(tienda=tienda)
+
+        if tienda_id is not None:
+            queryset = queryset.filter(tienda_id=tienda_id)
 
         if categoria_id is not None:
             queryset = queryset.filter(categoria_id=categoria_id)
@@ -442,6 +447,31 @@ class CreateStoreOrder(graphene.Mutation):
             producto = ProductoTienda.objects.get(pk=producto_id)
         except ProductoTienda.DoesNotExist as exc:
             raise GraphQLError("Producto no encontrado") from exc
+
+        if (
+            producto.tipo == ProductoTienda.TIPO_PRODUCTO
+            and producto.stock is not None
+            and not producto.permite_encargo
+        ):
+            from django.db.models import Sum
+
+            comprometido = (
+                StoreOrder.objects.filter(
+                    producto=producto,
+                    estado__in=[StoreOrder.ESTADO_PENDIENTE, StoreOrder.ESTADO_EN_CURSO],
+                ).aggregate(total=Sum('cantidad'))['total']
+                or 0
+            )
+            disponible = max(producto.stock - comprometido, 0)
+            if cantidad > disponible:
+                if disponible == 0:
+                    raise GraphQLError(
+                        "Este producto no tiene stock disponible por ahora. "
+                        "La tienda no acepta pedidos por encargo para este producto."
+                    )
+                raise GraphQLError(
+                    f"Stock insuficiente: solo quedan {disponible} unidad(es) disponibles."
+                )
 
         precio_unitario: Decimal = producto.precio
         total = precio_unitario * Decimal(cantidad)

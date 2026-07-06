@@ -168,6 +168,12 @@ class ProductoTienda(models.Model):
     stock = models.PositiveIntegerField(blank=True, null=True)
     tipo = models.CharField(max_length=15, choices=TIPOS, default=TIPO_PRODUCTO)
     imagen = models.ImageField(upload_to='productos_tienda/', blank=True, null=True)
+    imagen_2 = models.ImageField(upload_to='productos_tienda/', blank=True, null=True)
+    imagen_3 = models.ImageField(upload_to='productos_tienda/', blank=True, null=True)
+    permite_encargo = models.BooleanField(
+        default=False,
+        help_text='Permite recibir pedidos aunque el stock disponible sea insuficiente (venta por encargo).',
+    )
     categoria = models.ForeignKey('Categoria', on_delete=models.SET_NULL, null=True, blank=True, related_name='productos_tienda')
 
     def __str__(self):

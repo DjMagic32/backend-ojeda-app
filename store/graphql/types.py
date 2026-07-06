@@ -77,7 +77,10 @@ class CategoriaType(DjangoObjectType):
 
 class ProductoTiendaType(DjangoObjectType):
     tienda = graphene.Int()
+    tienda_detalle = graphene.Field(lambda: TiendaType)
     imagen = graphene.String()
+    imagen_2 = graphene.String()
+    imagen_3 = graphene.String()
     reviews = graphene.List(lambda: StoreOrderReviewType)
     average_rating = graphene.Float()
     total_reviews = graphene.Int()
@@ -95,14 +98,26 @@ class ProductoTiendaType(DjangoObjectType):
             "stock",
             "tipo",
             "imagen",
+            "imagen_2",
+            "imagen_3",
+            "permite_encargo",
             "categoria",
         )
 
     def resolve_tienda(self, info):
         return self.tienda_id
 
+    def resolve_tienda_detalle(self, info):
+        return self.tienda
+
     def resolve_imagen(self, info):
         return _absolute_uri(info, self.imagen)
+
+    def resolve_imagen_2(self, info):
+        return _absolute_uri(info, self.imagen_2)
+
+    def resolve_imagen_3(self, info):
+        return _absolute_uri(info, self.imagen_3)
 
     def resolve_reviews(self, info):
         return list(
