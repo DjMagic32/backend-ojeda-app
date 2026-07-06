@@ -85,7 +85,7 @@ def notificar_orden(sender, instance: StoreOrder, created, **kwargs):
                 titulo='Tienes una nueva orden',
                 mensaje=f'{instance.cantidad} x {producto.nombre}',
                 tipo=Notificacion.TIPO_ORDEN,
-                data={'order_id': instance.id},
+                data={'order_id': instance.id, 'view': 'store'},
             )
         return
 
@@ -99,7 +99,7 @@ def notificar_orden(sender, instance: StoreOrder, created, **kwargs):
         titulo='Estado de tu orden actualizado',
         mensaje=f'Tu orden #{instance.id} ahora está {etiqueta}.',
         tipo=Notificacion.TIPO_ORDEN,
-        data={'order_id': instance.id, 'estado': instance.estado},
+        data={'order_id': instance.id, 'estado': instance.estado, 'view': 'buyer'},
     )
 
 

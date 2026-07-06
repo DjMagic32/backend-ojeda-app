@@ -4,6 +4,7 @@ from django.contrib.auth.models import AbstractUser
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.utils import timezone
+from django.utils.crypto import get_random_string
 
 
 class Usuario(AbstractUser):
@@ -222,13 +223,17 @@ class ServiceRequest(models.Model):
 
     ESTADO_PENDIENTE = 'pending'
     ESTADO_ASIGNADO = 'assigned'
+    ESTADO_LLEGO_RECOGIDA = 'arrived_pickup'
     ESTADO_EN_CURSO = 'in_progress'
+    ESTADO_LLEGO_DESTINO = 'arrived_dropoff'
     ESTADO_COMPLETADO = 'completed'
     ESTADO_CANCELADO = 'cancelled'
     ESTADOS = [
         (ESTADO_PENDIENTE, 'Pendiente'),
         (ESTADO_ASIGNADO, 'Asignado'),
+        (ESTADO_LLEGO_RECOGIDA, 'Llegó al punto de recogida'),
         (ESTADO_EN_CURSO, 'En curso'),
+        (ESTADO_LLEGO_DESTINO, 'Llegó al destino'),
         (ESTADO_COMPLETADO, 'Completado'),
         (ESTADO_CANCELADO, 'Cancelado'),
     ]
@@ -270,6 +275,7 @@ class ServiceRequest(models.Model):
     costo_estimado = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     ruta_geojson = models.JSONField(blank=True, null=True)
     notas = models.TextField(blank=True, null=True)
+    codigo_entrega = models.CharField(max_length=6, blank=True, null=True, editable=False)
     asignado_en = models.DateTimeField(blank=True, null=True)
     completado_en = models.DateTimeField(blank=True, null=True)
     creado = models.DateTimeField(auto_now_add=True)
@@ -277,6 +283,21 @@ class ServiceRequest(models.Model):
 
     class Meta:
         ordering = ['-creado']
+
+    @property
+    def receptor_codigo(self) -> Usuario:
+        """Quien posee el código de entrega: el comprador de la orden asociada
+        (la tienda solicitante nunca lo ve) o, si no hay orden, el solicitante."""
+        if self.store_order and self.store_order.usuario_id != self.cliente_id:
+            return self.store_order.usuario
+        return self.cliente
+
+    def save(self, *args, **kwargs):
+        if not self.codigo_entrega:
+            self.codigo_entrega = get_random_string(6, '0123456789')
+            if 'update_fields' in kwargs and kwargs['update_fields'] is not None:
+                kwargs['update_fields'] = list(kwargs['update_fields']) + ['codigo_entrega']
+        super().save(*args, **kwargs)
 
     def marcar_asignado(self, driver: Usuario | None = None):
         self.driver = driver

@@ -3,6 +3,7 @@ from django.db.models import Avg
 from graphene_django import DjangoObjectType
 
 from store.models import (
+    Conversation,
     DriverProfile,
     ProductoTienda,
     ServiceRequest,
@@ -333,6 +334,8 @@ class ServiceRequestType(DjangoObjectType):
     ruta_geojson = graphene.JSONString()
     cliente_detalle = graphene.Field(UsuarioType)
     driver_detalle = graphene.Field(UsuarioType)
+    codigo_entrega = graphene.String()
+    conversation_id = graphene.Int()
 
     class Meta:
         model = ServiceRequest
@@ -377,3 +380,17 @@ class ServiceRequestType(DjangoObjectType):
 
     def resolve_driver_detalle(self, info):
         return self.driver
+
+    def resolve_codigo_entrega(self, info):
+        # Solo quien recibe (comprador o solicitante directo) ve el código;
+        # ni la tienda solicitante ni el conductor pueden leerlo.
+        user = info.context.user
+        if user and user.is_authenticated and user.id == self.receptor_codigo.id:
+            return self.codigo_entrega
+        return None
+
+    def resolve_conversation_id(self, info):
+        if not self.driver_id:
+            return None
+        conversacion, _ = Conversation.get_or_create_between(self.cliente, self.driver)
+        return conversacion.id

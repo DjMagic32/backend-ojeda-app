@@ -17,7 +17,9 @@ from rest_framework_simplejwt.tokens import RefreshToken
 logger = logging.getLogger(__name__)
 
 from store.models import (
+    Conversation,
     DriverProfile,
+    Notificacion,
     PasswordResetCode,
     ProductoTienda,
     ServiceRequest,
@@ -80,7 +82,9 @@ class ServiceRequestTypeEnum(Enum):
 class ServiceRequestStatusEnum(Enum):
     PENDING = ServiceRequest.ESTADO_PENDIENTE
     ASSIGNED = ServiceRequest.ESTADO_ASIGNADO
+    ARRIVED_PICKUP = ServiceRequest.ESTADO_LLEGO_RECOGIDA
     IN_PROGRESS = ServiceRequest.ESTADO_EN_CURSO
+    ARRIVED_DROPOFF = ServiceRequest.ESTADO_LLEGO_DESTINO
     COMPLETED = ServiceRequest.ESTADO_COMPLETADO
     CANCELLED = ServiceRequest.ESTADO_CANCELADO
 
@@ -350,7 +354,7 @@ class Query(graphene.ObjectType):
                 driver_qs = driver_qs | base_queryset.filter(
                     driver__isnull=True,
                     estado=ServiceRequest.ESTADO_PENDIENTE,
-                )
+                ).exclude(cliente=user)
             return list(driver_qs.distinct())
 
         return list(base_queryset.filter(cliente=user))
@@ -863,25 +867,137 @@ class AssignServiceRequest(graphene.Mutation):
         if servicio.estado != ServiceRequest.ESTADO_PENDIENTE or servicio.driver_id:
             raise GraphQLError("La solicitud ya fue tomada o no está disponible")
 
+        if servicio.cliente_id == user.id:
+            raise GraphQLError("No puedes tomar una solicitud creada por ti mismo")
+
         servicio.marcar_asignado(driver=user)
+
+        # Canal de chat conductor <-> solicitante disponible desde ya.
+        Conversation.get_or_create_between(servicio.cliente, user)
+
+        driver_nombre = user.first_name or 'Un conductor'
+        receptor = servicio.receptor_codigo
+        if receptor.id == servicio.cliente_id:
+            Notificacion.objects.create(
+                usuario_id=servicio.cliente_id,
+                titulo='¡Conductor asignado!',
+                mensaje=(
+                    f'{driver_nombre} tomó tu solicitud. Tu código de confirmación es '
+                    f'{servicio.codigo_entrega}. Dáselo al conductor al finalizar.'
+                ),
+                tipo=Notificacion.TIPO_SERVICIO,
+                data={'service_id': servicio.id},
+            )
+        else:
+            Notificacion.objects.create(
+                usuario_id=servicio.cliente_id,
+                titulo='¡Conductor asignado!',
+                mensaje=f'{driver_nombre} tomó tu solicitud y va en camino.',
+                tipo=Notificacion.TIPO_SERVICIO,
+                data={'service_id': servicio.id},
+            )
+            Notificacion.objects.create(
+                usuario_id=receptor.id,
+                titulo='Tu pedido va en camino',
+                mensaje=(
+                    f'Tu código de entrega es {servicio.codigo_entrega}. '
+                    'Dáselo al conductor cuando recibas tu paquete.'
+                ),
+                tipo=Notificacion.TIPO_SERVICIO,
+                data={'service_id': servicio.id},
+            )
+
         return AssignServiceRequest(service_request=servicio)
+
+
+SERVICE_TRANSICIONES_VALIDAS = {
+    ServiceRequest.ESTADO_PENDIENTE: {ServiceRequest.ESTADO_CANCELADO},
+    ServiceRequest.ESTADO_ASIGNADO: {
+        ServiceRequest.ESTADO_LLEGO_RECOGIDA,
+        ServiceRequest.ESTADO_EN_CURSO,
+        ServiceRequest.ESTADO_CANCELADO,
+    },
+    ServiceRequest.ESTADO_LLEGO_RECOGIDA: {
+        ServiceRequest.ESTADO_EN_CURSO,
+        ServiceRequest.ESTADO_CANCELADO,
+    },
+    ServiceRequest.ESTADO_EN_CURSO: {
+        ServiceRequest.ESTADO_LLEGO_DESTINO,
+        ServiceRequest.ESTADO_COMPLETADO,
+    },
+    ServiceRequest.ESTADO_LLEGO_DESTINO: {ServiceRequest.ESTADO_COMPLETADO},
+}
+
+SERVICE_ESTADOS_SOLO_CONDUCTOR = {
+    ServiceRequest.ESTADO_LLEGO_RECOGIDA,
+    ServiceRequest.ESTADO_EN_CURSO,
+    ServiceRequest.ESTADO_LLEGO_DESTINO,
+}
+
+
+def _notificar_transicion_servicio(servicio: ServiceRequest, estado_value: str):
+    receptor = servicio.receptor_codigo
+    destinatarios = {servicio.cliente_id, receptor.id}
+    es_taxi = servicio.tipo == ServiceRequest.TIPO_TAXI
+
+    mensajes = {
+        ServiceRequest.ESTADO_LLEGO_RECOGIDA: (
+            'Tu conductor llegó',
+            'El conductor está en el punto de recogida.'
+            if es_taxi
+            else 'El conductor llegó al punto de recogida del paquete.',
+        ),
+        ServiceRequest.ESTADO_EN_CURSO: (
+            'Viaje en curso' if es_taxi else 'Tu paquete va en camino',
+            'El conductor va rumbo al destino.',
+        ),
+        ServiceRequest.ESTADO_LLEGO_DESTINO: (
+            'El conductor llegó al destino',
+            'Entrega tu código de confirmación al conductor para finalizar.',
+        ),
+        ServiceRequest.ESTADO_COMPLETADO: (
+            'Servicio completado',
+            '¡Viaje finalizado con éxito!' if es_taxi else 'Tu entrega fue confirmada con éxito.',
+        ),
+    }
+    contenido = mensajes.get(estado_value)
+    if not contenido:
+        return
+    titulo, mensaje = contenido
+    for usuario_id in destinatarios:
+        Notificacion.objects.create(
+            usuario_id=usuario_id,
+            titulo=titulo,
+            mensaje=mensaje,
+            tipo=Notificacion.TIPO_SERVICIO,
+            data={'service_id': servicio.id, 'estado': estado_value},
+        )
 
 
 class UpdateServiceRequestStatus(graphene.Mutation):
     class Arguments:
         service_request_id = graphene.ID(required=True)
         estado = graphene.Argument(ServiceRequestStatusEnum, required=True)
+        codigo_entrega = graphene.String(required=False)
 
     service_request = graphene.Field(ServiceRequestType)
 
     @staticmethod
-    def mutate(root, info, service_request_id: int, estado: ServiceRequestStatusEnum):
+    def mutate(
+        root,
+        info,
+        service_request_id: int,
+        estado: ServiceRequestStatusEnum,
+        codigo_entrega: Optional[str] = None,
+    ):
         user = info.context.user
         if not user or not user.is_authenticated:
             raise GraphQLError("Autenticación requerida")
 
         try:
-            servicio = ServiceRequest.objects.select_related("driver", "cliente").get(pk=service_request_id)
+            servicio = ServiceRequest.objects.select_related(
+                "driver", "cliente", "store_order__usuario"
+            ).get(pk=service_request_id)
         except ServiceRequest.DoesNotExist as exc:
             raise GraphQLError("Solicitud no encontrada") from exc
 
@@ -896,13 +1012,30 @@ class UpdateServiceRequestStatus(graphene.Mutation):
         if not (is_driver or is_client):
             raise GraphQLError("No tienes permisos para actualizar esta solicitud")
 
+        transiciones = SERVICE_TRANSICIONES_VALIDAS.get(servicio.estado, set())
+        if estado_value not in transiciones:
+            raise GraphQLError(
+                f"No se puede pasar de '{servicio.estado}' a '{estado_value}'"
+            )
+
         if estado_value == ServiceRequest.ESTADO_CANCELADO and not is_client:
             raise GraphQLError("Solo el cliente puede cancelar la solicitud")
+
+        if estado_value in SERVICE_ESTADOS_SOLO_CONDUCTOR and not is_driver:
+            raise GraphQLError("Solo el conductor asignado puede marcar este estado")
+
+        if estado_value == ServiceRequest.ESTADO_COMPLETADO:
+            if not codigo_entrega or codigo_entrega.strip() != servicio.codigo_entrega:
+                raise GraphQLError(
+                    "Código de confirmación inválido. Pídele el código a quien recibe."
+                )
 
         servicio.estado = estado_value
         if estado_value == ServiceRequest.ESTADO_COMPLETADO:
             servicio.completado_en = timezone.now()
         servicio.save(update_fields=["estado", "completado_en", "actualizado"])
+
+        _notificar_transicion_servicio(servicio, estado_value)
 
         return UpdateServiceRequestStatus(service_request=servicio)
 
