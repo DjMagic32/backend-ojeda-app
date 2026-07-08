@@ -9,7 +9,8 @@ from graphql import GraphQLError
 from django.conf import settings
 from django.contrib.auth import authenticate
 from store.services.mail import send_app_email
-from django.db.models import Q, QuerySet
+from django.db import transaction
+from django.db.models import Q, QuerySet, Sum
 from django.utils import timezone
 from django.utils.crypto import get_random_string
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -17,6 +18,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 logger = logging.getLogger(__name__)
 
 from store.models import (
+    Carrito,
     Conversation,
     DriverProfile,
     Notificacion,
@@ -24,6 +26,7 @@ from store.models import (
     ProductoTienda,
     ServiceRequest,
     StoreOrder,
+    StoreOrderItem,
     StoreOrderReview,
     StoreOrderSellerReview,
     TasaCambio,
@@ -388,7 +391,15 @@ class Query(graphene.ObjectType):
         except ServiceRequest.DoesNotExist as exc:
             raise GraphQLError("Solicitud no encontrada") from exc
 
-        if servicio.cliente_id != user.id and servicio.driver_id != user.id:
+        es_comprador_orden = (
+            servicio.store_order is not None
+            and servicio.store_order.usuario_id == user.id
+        )
+        if (
+            servicio.cliente_id != user.id
+            and servicio.driver_id != user.id
+            and not es_comprador_orden
+        ):
             raise GraphQLError("No tienes permiso para ver esta solicitud")
 
         return servicio
@@ -416,6 +427,35 @@ class Login(graphene.Mutation):
         access_token = str(refresh.access_token)
         refresh_token = str(refresh)
         return Login(access_token=access_token, refresh_token=refresh_token, user=user)
+
+
+def _validar_stock_producto(producto: ProductoTienda, cantidad: int) -> None:
+    if (
+        producto.tipo == ProductoTienda.TIPO_PRODUCTO
+        and producto.stock is not None
+        and not producto.permite_encargo
+    ):
+        comprometido = (
+            StoreOrderItem.objects.filter(
+                producto=producto,
+                order__estado__in=[
+                    StoreOrder.ESTADO_PENDIENTE,
+                    StoreOrder.ESTADO_EN_CURSO,
+                ],
+            ).aggregate(total=Sum('cantidad'))['total']
+            or 0
+        )
+        disponible = max(producto.stock - comprometido, 0)
+        if cantidad > disponible:
+            if disponible == 0:
+                raise GraphQLError(
+                    f"'{producto.nombre}' no tiene stock disponible por ahora. "
+                    "La tienda no acepta pedidos por encargo para este producto."
+                )
+            raise GraphQLError(
+                f"Stock insuficiente de '{producto.nombre}': solo quedan "
+                f"{disponible} unidad(es) disponibles."
+            )
 
 
 class CreateStoreOrder(graphene.Mutation):
@@ -448,49 +488,109 @@ class CreateStoreOrder(graphene.Mutation):
         except ProductoTienda.DoesNotExist as exc:
             raise GraphQLError("Producto no encontrado") from exc
 
-        if (
-            producto.tipo == ProductoTienda.TIPO_PRODUCTO
-            and producto.stock is not None
-            and not producto.permite_encargo
-        ):
-            from django.db.models import Sum
-
-            comprometido = (
-                StoreOrder.objects.filter(
-                    producto=producto,
-                    estado__in=[StoreOrder.ESTADO_PENDIENTE, StoreOrder.ESTADO_EN_CURSO],
-                ).aggregate(total=Sum('cantidad'))['total']
-                or 0
-            )
-            disponible = max(producto.stock - comprometido, 0)
-            if cantidad > disponible:
-                if disponible == 0:
-                    raise GraphQLError(
-                        "Este producto no tiene stock disponible por ahora. "
-                        "La tienda no acepta pedidos por encargo para este producto."
-                    )
-                raise GraphQLError(
-                    f"Stock insuficiente: solo quedan {disponible} unidad(es) disponibles."
-                )
+        _validar_stock_producto(producto, cantidad)
 
         precio_unitario: Decimal = producto.precio
         total = precio_unitario * Decimal(cantidad)
         tasa = TasaCambio.vigente()
 
-        order = StoreOrder.objects.create(
-            usuario=user,
-            producto=producto,
-            cantidad=cantidad,
-            precio_unitario=precio_unitario,
-            total=total,
-            moneda=producto.moneda,
-            tasa_aplicada=tasa.valor_bs if tasa else None,
-            estado=StoreOrder.ESTADO_PENDIENTE,
-            direccion_entrega=direccion_entrega,
-            notas=notas,
-        )
+        with transaction.atomic():
+            order = StoreOrder.objects.create(
+                usuario=user,
+                producto=producto,
+                cantidad=cantidad,
+                precio_unitario=precio_unitario,
+                total=total,
+                moneda=producto.moneda,
+                tasa_aplicada=tasa.valor_bs if tasa else None,
+                estado=StoreOrder.ESTADO_PENDIENTE,
+                direccion_entrega=direccion_entrega,
+                notas=notas,
+            )
+            StoreOrderItem.objects.create(
+                order=order,
+                producto=producto,
+                cantidad=cantidad,
+                precio_unitario=precio_unitario,
+                subtotal=total,
+            )
 
         return CreateStoreOrder(order=order)
+
+
+class CheckoutCart(graphene.Mutation):
+    class Arguments:
+        direccion_entrega = graphene.String(required=False)
+        notas = graphene.String(required=False)
+
+    orders = graphene.List(StoreOrderType)
+
+    @staticmethod
+    def mutate(
+        root,
+        info,
+        direccion_entrega: Optional[str] = None,
+        notas: Optional[str] = None,
+    ):
+        user = info.context.user
+        if not user or not user.is_authenticated:
+            raise GraphQLError("Autenticación requerida")
+
+        carrito = Carrito.objects.filter(usuario=user).first()
+        items = (
+            list(carrito.items.select_related("producto_tienda__tienda"))
+            if carrito
+            else []
+        )
+        items = [item for item in items if item.producto_tienda_id]
+        if not items:
+            raise GraphQLError("Tu carrito está vacío")
+
+        for item in items:
+            _validar_stock_producto(item.producto_tienda, item.cantidad)
+
+        tasa = TasaCambio.vigente()
+
+        # Una orden por combinación tienda+moneda: cada tienda cobra y
+        # despacha por separado.
+        grupos: dict = {}
+        for item in items:
+            clave = (item.producto_tienda.tienda_id, item.producto_tienda.moneda)
+            grupos.setdefault(clave, []).append(item)
+
+        orders = []
+        with transaction.atomic():
+            for (_tienda_id, moneda), grupo in grupos.items():
+                total = sum(
+                    (item.producto_tienda.precio * item.cantidad for item in grupo),
+                    Decimal('0'),
+                )
+                order = StoreOrder.objects.create(
+                    usuario=user,
+                    producto=grupo[0].producto_tienda,
+                    cantidad=sum(item.cantidad for item in grupo),
+                    precio_unitario=grupo[0].producto_tienda.precio,
+                    total=total,
+                    moneda=moneda,
+                    tasa_aplicada=tasa.valor_bs if tasa else None,
+                    estado=StoreOrder.ESTADO_PENDIENTE,
+                    direccion_entrega=direccion_entrega,
+                    notas=notas,
+                )
+                StoreOrderItem.objects.bulk_create(
+                    StoreOrderItem(
+                        order=order,
+                        producto=item.producto_tienda,
+                        cantidad=item.cantidad,
+                        precio_unitario=item.producto_tienda.precio,
+                        subtotal=item.producto_tienda.precio * item.cantidad,
+                    )
+                    for item in grupo
+                )
+                orders.append(order)
+            carrito.items.all().delete()
+
+        return CheckoutCart(orders=orders)
 
 
 class UpdateStoreOrderStatus(graphene.Mutation):
@@ -821,9 +921,18 @@ class CreateServiceRequest(graphene.Mutation):
         store_order = None
         if store_order_id is not None:
             try:
-                store_order = StoreOrder.objects.select_related("usuario").get(pk=store_order_id, usuario=user)
+                store_order = StoreOrder.objects.select_related(
+                    "usuario", "producto__tienda__usuario"
+                ).get(
+                    Q(usuario=user) | Q(producto__tienda__usuario=user),
+                    pk=store_order_id,
+                )
             except StoreOrder.DoesNotExist as exc:
                 raise GraphQLError("No se encontró la orden asociada para delivery") from exc
+            if store_order.service_requests.exclude(
+                estado=ServiceRequest.ESTADO_CANCELADO
+            ).exists():
+                raise GraphQLError("Esta orden ya tiene un delivery en curso")
 
         servicio = ServiceRequest(
             tipo=tipo_value,
@@ -872,6 +981,19 @@ class CreateServiceRequest(graphene.Mutation):
                 pass
 
         servicio.save()
+
+        if store_order and store_order.usuario_id != user.id:
+            Notificacion.objects.create(
+                usuario=store_order.usuario,
+                titulo="Delivery solicitado",
+                mensaje=(
+                    f"La tienda solicitó un delivery para tu orden #{store_order.id}. "
+                    "Podrás seguirlo desde tu orden."
+                ),
+                tipo=Notificacion.TIPO_SERVICIO,
+                data={"service_id": servicio.id},
+            )
+
         return CreateServiceRequest(service_request=servicio)
 
 
@@ -1418,6 +1540,7 @@ class Mutation(graphene.ObjectType):
     reset_password = ResetPassword.Field()
     delete_my_account = DeleteMyAccount.Field()
     create_store_order = CreateStoreOrder.Field()
+    checkout_cart = CheckoutCart.Field()
     update_store_order_status = UpdateStoreOrderStatus.Field()
     create_store_order_review = CreateStoreOrderReview.Field()
     create_store_order_seller_review = CreateStoreOrderSellerReview.Field()

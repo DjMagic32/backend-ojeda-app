@@ -26,6 +26,7 @@ from .models import (
     Wallet,
     Usuario,
     StoreOrder,
+    OrderPayment,
     ProductoFavorito,
     Notificacion,
 )
@@ -55,6 +56,7 @@ from .serializers import (
     WalletActionRequestSerializer,
     UsuarioDetalleRequestSerializer,
     StoreOrderSerializer,
+    OrderPaymentSerializer,
     ProductoFavoritoSerializer,
     NotificacionSerializer,
 )
@@ -408,6 +410,141 @@ class StoreOrderViewSet(viewsets.ModelViewSet):
             tasa_aplicada=tasa.valor_bs if tasa else None,
             estado=StoreOrder.ESTADO_PENDIENTE,
         )
+
+    @action(
+        detail=True,
+        methods=['post', 'patch'],
+        url_path='pago',
+        parser_classes=[MultiPartParser, FormParser, JSONParser],
+    )
+    def pago(self, request, pk=None):
+        try:
+            order = StoreOrder.objects.select_related(
+                'producto', 'producto__tienda', 'usuario'
+            ).get(pk=pk)
+        except StoreOrder.DoesNotExist:
+            return Response({'error': 'Orden no encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if request.method == 'POST':
+            return self._reportar_pago(request, order)
+        return self._resolver_pago(request, order)
+
+    def _reportar_pago(self, request, order: StoreOrder):
+        user = request.user
+        if order.usuario_id != user.id:
+            return Response({'error': 'Solo el comprador puede reportar el pago.'}, status=status.HTTP_403_FORBIDDEN)
+        if order.estado != StoreOrder.ESTADO_PENDIENTE:
+            return Response(
+                {'error': 'Solo puedes reportar el pago de órdenes pendientes.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if order.pagos.filter(estado=OrderPayment.ESTADO_REPORTADO).exists():
+            return Response(
+                {'error': 'Ya reportaste un pago para esta orden. Espera a que la tienda lo revise.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if order.pagos.filter(estado=OrderPayment.ESTADO_CONFIRMADO).exists():
+            return Response({'error': 'Esta orden ya tiene un pago confirmado.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        metodo = request.data.get('metodo')
+        metodos_validos = {m for m, _ in OrderPayment.METODOS}
+        if metodo not in metodos_validos:
+            return Response(
+                {'error': f"Método de pago inválido. Usa uno de: {', '.join(sorted(metodos_validos))}."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        referencia = (request.data.get('referencia') or '').strip() or None
+        if metodo != OrderPayment.METODO_EFECTIVO and not referencia:
+            return Response(
+                {'error': 'Indica el número de referencia del pago.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        pago = OrderPayment.objects.create(
+            order=order,
+            metodo=metodo,
+            referencia=referencia,
+            captura=request.FILES.get('captura'),
+        )
+
+        tienda_user_id = order.producto.tienda.usuario_id
+        if tienda_user_id != user.id:
+            Notificacion.objects.create(
+                usuario_id=tienda_user_id,
+                titulo='Pago reportado',
+                mensaje=f'El comprador reportó el pago de la orden #{order.id}. Revísalo y confírmalo.',
+                tipo=Notificacion.TIPO_ORDEN,
+                data={'order_id': order.id, 'view': 'store'},
+            )
+
+        return Response(
+            OrderPaymentSerializer(pago, context={'request': request}).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    def _resolver_pago(self, request, order: StoreOrder):
+        user = request.user
+        if getattr(user, 'rol', None) != Usuario.ES_TIENDA or order.producto.tienda.usuario_id != user.id:
+            return Response(
+                {'error': 'Solo la tienda dueña de la orden puede confirmar o rechazar el pago.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        accion = request.data.get('accion')
+        if accion not in ('confirm', 'reject'):
+            return Response({'error': "Acción inválida. Usa 'confirm' o 'reject'."}, status=status.HTTP_400_BAD_REQUEST)
+
+        pago = order.pagos.filter(estado=OrderPayment.ESTADO_REPORTADO).first()
+        if not pago:
+            return Response({'error': 'No hay ningún pago reportado pendiente por revisar.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if accion == 'confirm':
+            pago.estado = OrderPayment.ESTADO_CONFIRMADO
+            pago.save(update_fields=['estado', 'actualizado'])
+            if order.estado == StoreOrder.ESTADO_PENDIENTE:
+                order.estado = StoreOrder.ESTADO_EN_CURSO
+                order.save(update_fields=['estado', 'actualizado'])
+        else:
+            motivo = (request.data.get('motivo') or '').strip() or None
+            pago.estado = OrderPayment.ESTADO_RECHAZADO
+            pago.motivo_rechazo = motivo
+            pago.save(update_fields=['estado', 'motivo_rechazo', 'actualizado'])
+            Notificacion.objects.create(
+                usuario_id=order.usuario_id,
+                titulo='Pago rechazado',
+                mensaje=(
+                    f'La tienda rechazó el pago de tu orden #{order.id}'
+                    + (f': {motivo}' if motivo else '. Verifica los datos y repórtalo de nuevo.')
+                ),
+                tipo=Notificacion.TIPO_ORDEN,
+                data={'order_id': order.id, 'view': 'buyer'},
+            )
+
+        return Response(OrderPaymentSerializer(pago, context={'request': request}).data)
+
+
+class MiTiendaView(generics.GenericAPIView):
+    permission_classes = [IsAuthenticated, EsTienda]
+    serializer_class = TiendaSerializer
+
+    def get(self, request):
+        try:
+            tienda = Tienda.objects.get(usuario=request.user)
+        except Tienda.DoesNotExist:
+            return Response({'error': 'El usuario no tiene una tienda asociada.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response(self.get_serializer(tienda).data)
+
+    def patch(self, request):
+        try:
+            tienda = Tienda.objects.get(usuario=request.user)
+        except Tienda.DoesNotExist:
+            return Response({'error': 'El usuario no tiene una tienda asociada.'}, status=status.HTTP_404_NOT_FOUND)
+        serializer = self.get_serializer(tienda, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(usuario=request.user)
+        return Response(serializer.data)
+
 
 class ComentarioViewSet(viewsets.ModelViewSet):
     #permission_classes = [IsAuthenticated]

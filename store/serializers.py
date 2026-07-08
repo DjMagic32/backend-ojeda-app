@@ -21,6 +21,8 @@ from .models import (
     Wallet,
     Usuario,
     StoreOrder,
+    StoreOrderItem,
+    OrderPayment,
     ProductoFavorito,
     Notificacion,
 )
@@ -43,6 +45,8 @@ class ProductoSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class ProductoTiendaSerializer(serializers.ModelSerializer):
+    tienda_nombre = serializers.CharField(source='tienda.nombre', read_only=True)
+
     class Meta:
         model = ProductoTienda
         fields = '__all__'
@@ -187,11 +191,39 @@ class UsuarioDetalleRequestSerializer(serializers.Serializer):
     token = serializers.CharField()
 
 
+class OrderPaymentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = OrderPayment
+        fields = [
+            'id',
+            'order',
+            'metodo',
+            'referencia',
+            'captura',
+            'estado',
+            'motivo_rechazo',
+            'creado',
+            'actualizado',
+        ]
+        read_only_fields = ['id', 'order', 'estado', 'motivo_rechazo', 'creado', 'actualizado']
+
+
+class StoreOrderItemSerializer(serializers.ModelSerializer):
+    producto = ProductoTiendaSerializer(read_only=True)
+
+    class Meta:
+        model = StoreOrderItem
+        fields = ['id', 'producto', 'cantidad', 'precio_unitario', 'subtotal']
+        read_only_fields = fields
+
+
 class StoreOrderSerializer(serializers.ModelSerializer):
     producto = ProductoTiendaSerializer(read_only=True)
     producto_id = serializers.PrimaryKeyRelatedField(
         source='producto', queryset=ProductoTienda.objects.all(), write_only=True
     )
+    pago = serializers.SerializerMethodField()
+    items = StoreOrderItemSerializer(many=True, read_only=True)
 
     class Meta:
         model = StoreOrder
@@ -208,6 +240,8 @@ class StoreOrderSerializer(serializers.ModelSerializer):
             'estado',
             'direccion_entrega',
             'notas',
+            'pago',
+            'items',
             'creado',
             'actualizado',
         ]
@@ -222,6 +256,13 @@ class StoreOrderSerializer(serializers.ModelSerializer):
             'creado',
             'actualizado',
         ]
+
+    @extend_schema_field(OrderPaymentSerializer(allow_null=True))
+    def get_pago(self, obj):
+        pago = obj.pagos.first()
+        if not pago:
+            return None
+        return OrderPaymentSerializer(pago, context=self.context).data
 
 
 class ProductoFavoritoSerializer(serializers.ModelSerializer):

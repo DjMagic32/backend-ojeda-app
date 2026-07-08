@@ -139,7 +139,14 @@ class Tienda(models.Model):
         max_digits=9, decimal_places=6, null=True, blank=True,
     )
     ubicacion_actualizada = models.DateTimeField(null=True, blank=True)
+    pago_movil_banco = models.CharField(max_length=60, blank=True, null=True)
+    pago_movil_telefono = models.CharField(max_length=15, blank=True, null=True)
+    pago_movil_cedula = models.CharField(max_length=20, blank=True, null=True)
     creado = models.DateTimeField(auto_now_add=True)
+
+    @property
+    def pago_movil_configurado(self) -> bool:
+        return bool(self.pago_movil_banco and self.pago_movil_telefono and self.pago_movil_cedula)
 
     def __str__(self):
         return self.nombre
@@ -217,6 +224,55 @@ class StoreOrder(models.Model):
 
     def __str__(self):
         return f"Orden #{self.id} - {self.usuario.email} -> {self.producto.nombre}"
+
+
+class StoreOrderItem(models.Model):
+    order = models.ForeignKey(StoreOrder, on_delete=models.CASCADE, related_name='items')
+    producto = models.ForeignKey(ProductoTienda, on_delete=models.CASCADE, related_name='order_items')
+    cantidad = models.PositiveIntegerField(default=1)
+    precio_unitario = models.DecimalField(max_digits=10, decimal_places=2)
+    subtotal = models.DecimalField(max_digits=12, decimal_places=2)
+
+    class Meta:
+        ordering = ['id']
+
+    def __str__(self):
+        return f"{self.cantidad} x {self.producto.nombre} (orden #{self.order_id})"
+
+
+class OrderPayment(models.Model):
+    METODO_PAGO_MOVIL = 'pago_movil'
+    METODO_EFECTIVO = 'efectivo'
+    METODO_ZELLE = 'zelle'
+    METODOS = [
+        (METODO_PAGO_MOVIL, 'Pago móvil'),
+        (METODO_EFECTIVO, 'Efectivo'),
+        (METODO_ZELLE, 'Zelle'),
+    ]
+
+    ESTADO_REPORTADO = 'reported'
+    ESTADO_CONFIRMADO = 'confirmed'
+    ESTADO_RECHAZADO = 'rejected'
+    ESTADOS = [
+        (ESTADO_REPORTADO, 'Reportado'),
+        (ESTADO_CONFIRMADO, 'Confirmado'),
+        (ESTADO_RECHAZADO, 'Rechazado'),
+    ]
+
+    order = models.ForeignKey(StoreOrder, on_delete=models.CASCADE, related_name='pagos')
+    metodo = models.CharField(max_length=15, choices=METODOS)
+    referencia = models.CharField(max_length=40, blank=True, null=True)
+    captura = models.ImageField(upload_to='pagos/', blank=True, null=True)
+    estado = models.CharField(max_length=15, choices=ESTADOS, default=ESTADO_REPORTADO)
+    motivo_rechazo = models.TextField(blank=True, null=True)
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-creado']
+
+    def __str__(self):
+        return f"Pago {self.metodo} orden #{self.order_id} ({self.estado})"
 
 
 class ServiceRequest(models.Model):

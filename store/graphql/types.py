@@ -5,9 +5,11 @@ from graphene_django import DjangoObjectType
 from store.models import (
     Conversation,
     DriverProfile,
+    OrderPayment,
     ProductoTienda,
     ServiceRequest,
     StoreOrder,
+    StoreOrderItem,
     StoreOrderReview,
     StoreOrderSellerReview,
     Tienda,
@@ -34,6 +36,7 @@ def _absolute_uri(info, file_field):
 class TiendaType(DjangoObjectType):
     usuario = graphene.Int()
     logo = graphene.String()
+    pago_movil_configurado = graphene.Boolean()
 
     class Meta:
         model = Tienda
@@ -48,6 +51,9 @@ class TiendaType(DjangoObjectType):
             "ubicacion_lat",
             "ubicacion_lng",
             "ubicacion_actualizada",
+            "pago_movil_banco",
+            "pago_movil_telefono",
+            "pago_movil_cedula",
             "creado",
         )
 
@@ -223,11 +229,56 @@ class UsuarioType(DjangoObjectType):
             return None
 
 
+class OrderPaymentType(DjangoObjectType):
+    captura = graphene.String()
+    # String plano para evitar los enums en mayúsculas de graphene-django
+    metodo = graphene.String()
+    estado = graphene.String()
+
+    class Meta:
+        model = OrderPayment
+        fields = (
+            "id",
+            "metodo",
+            "referencia",
+            "captura",
+            "estado",
+            "motivo_rechazo",
+            "creado",
+            "actualizado",
+        )
+
+    def resolve_captura(self, info):
+        return _absolute_uri(info, self.captura)
+
+
+class StoreOrderItemType(DjangoObjectType):
+    producto = graphene.Field(ProductoTiendaType)
+
+    class Meta:
+        model = StoreOrderItem
+        fields = (
+            "id",
+            "producto",
+            "cantidad",
+            "precio_unitario",
+            "subtotal",
+        )
+
+    def resolve_producto(self, info):
+        return self.producto
+
+
 class StoreOrderType(DjangoObjectType):
     usuario = graphene.Int()
     producto = graphene.Field(ProductoTiendaType)
     review = graphene.Field(StoreOrderReviewType)
     seller_review = graphene.Field(lambda: StoreOrderSellerReviewType)
+    pago = graphene.Field(OrderPaymentType)
+    items = graphene.List(StoreOrderItemType)
+    delivery_service_id = graphene.Int()
+    # String plano para evitar los enums en mayúsculas de graphene-django
+    delivery_estado = graphene.String()
 
     class Meta:
         model = StoreOrder
@@ -250,6 +301,27 @@ class StoreOrderType(DjangoObjectType):
 
     def resolve_usuario(self, info):
         return self.usuario_id
+
+    def resolve_pago(self, info):
+        return self.pagos.first()
+
+    def resolve_items(self, info):
+        return self.items.all()
+
+    def _delivery_activo(self):
+        return (
+            self.service_requests.exclude(estado=ServiceRequest.ESTADO_CANCELADO)
+            .order_by('-creado')
+            .first()
+        )
+
+    def resolve_delivery_service_id(self, info):
+        servicio = self._delivery_activo()
+        return servicio.id if servicio else None
+
+    def resolve_delivery_estado(self, info):
+        servicio = self._delivery_activo()
+        return servicio.estado if servicio else None
 
     def resolve_producto(self, info):
         return self.producto
