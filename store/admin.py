@@ -15,10 +15,12 @@ from .models import (
     Producto,
     ProductoTienda,
     Referencia,
+    Reporte,
     StoreOrder,
     StoreOrderReview,
     StoreOrderSellerReview,
     Tienda,
+    TarifaDelivery,
     Usuario,
     Wallet,
     DriverProfile,
@@ -36,9 +38,10 @@ class UsuarioAdmin(admin.ModelAdmin):
 
 @admin.register(Tienda)
 class TiendaAdmin(admin.ModelAdmin):
-    list_display = ('nombre', 'usuario', 'direccion', 'telefono', 'creado')
+    list_display = ('nombre', 'usuario', 'direccion', 'telefono', 'verificada', 'creado')
     search_fields = ('nombre', 'usuario__username')
-    list_filter = ('creado',)
+    list_filter = ('verificada', 'creado')
+    list_editable = ('verificada',)
 
 @admin.register(ProductoTienda)
 class ProductoTiendaAdmin(admin.ModelAdmin):
@@ -212,3 +215,16 @@ class ServiceRequestAdmin(admin.ModelAdmin):
     )
     search_fields = ('cliente__username', 'driver__username', 'store_order__id')
     list_filter = ('tipo', 'estado', 'creado')
+
+@admin.register(Reporte)
+class ReporteAdmin(admin.ModelAdmin):
+    list_display = ('id', 'reportante', 'tienda', 'producto', 'motivo', 'estado', 'creado')
+    search_fields = ('reportante__email', 'tienda__nombre', 'producto__nombre')
+    list_filter = ('motivo', 'estado', 'creado')
+    list_editable = ('estado',)
+
+
+@admin.register(TarifaDelivery)
+class TarifaDeliveryAdmin(admin.ModelAdmin):
+    list_display = ('id', 'tarifa_base', 'tarifa_por_km', 'costo_minimo', 'activa', 'actualizado')
+    list_editable = ('tarifa_base', 'tarifa_por_km', 'costo_minimo', 'activa')

@@ -54,6 +54,7 @@ class TiendaType(DjangoObjectType):
             "pago_movil_banco",
             "pago_movil_telefono",
             "pago_movil_cedula",
+            "verificada",
             "creado",
         )
 
@@ -62,6 +63,12 @@ class TiendaType(DjangoObjectType):
 
     def resolve_logo(self, info):
         return _absolute_uri(info, self.logo)
+
+
+class TarifaDeliveryType(graphene.ObjectType):
+    tarifa_base = graphene.Float()
+    tarifa_por_km = graphene.Float()
+    costo_minimo = graphene.Float()
 
 
 class CategoriaType(DjangoObjectType):

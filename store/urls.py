@@ -33,6 +33,7 @@ from .views import (
     NotificacionListView,
     NotificacionMarkReadView,
     NotificacionUnreadCountView,
+    ReporteCreateView,
 )
 
 router = DefaultRouter()
@@ -67,4 +68,5 @@ urlpatterns = [
     path('exchange-rate/', TasaCambioView.as_view(), name='exchange-rate'),
     path('exchange-rate/history/', TasaCambioHistoryView.as_view(), name='exchange-rate-history'),
     path('store/dashboard/', StoreDashboardView.as_view(), name='store-dashboard'),
+    path('reportes/', ReporteCreateView.as_view(), name='reportes'),
 ]

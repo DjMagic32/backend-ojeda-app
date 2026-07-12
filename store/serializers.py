@@ -25,6 +25,7 @@ from .models import (
     OrderPayment,
     ProductoFavorito,
     Notificacion,
+    Reporte,
 )
 
 class UsuarioSerializer(serializers.ModelSerializer):
@@ -379,3 +380,22 @@ class StoreDashboardSerializer(serializers.Serializer):
     productos_top = serializers.ListField(child=serializers.DictField())
     serie_diaria = serializers.ListField(child=serializers.DictField())
     tasa_vigente = TasaCambioSerializer(allow_null=True)
+
+
+class ReporteSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Reporte
+        fields = ['id', 'tienda', 'producto', 'motivo', 'descripcion', 'estado', 'creado']
+        read_only_fields = ['id', 'estado', 'creado']
+
+    def validate(self, attrs):
+        producto = attrs.get('producto')
+        if not attrs.get('tienda') and not producto:
+            raise serializers.ValidationError('Debes indicar la tienda o el producto a reportar.')
+        if producto:
+            attrs['tienda'] = producto.tienda
+        return attrs
+
+    def create(self, validated_data):
+        validated_data['reportante'] = self.context['request'].user
+        return super().create(validated_data)

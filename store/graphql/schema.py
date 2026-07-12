@@ -29,6 +29,7 @@ from store.models import (
     StoreOrderItem,
     StoreOrderReview,
     StoreOrderSellerReview,
+    TarifaDelivery,
     TasaCambio,
     Tienda,
     Usuario,
@@ -36,6 +37,7 @@ from store.models import (
 from .types import (
     DriverProfileType,
     ProductoTiendaType,
+    TarifaDeliveryType,
     ServiceRequestType,
     StoreOrderReviewType,
     StoreOrderSellerReviewType,
@@ -47,6 +49,7 @@ from store.services.mapbox import (
     extract_route_summary,
     fetch_directions,
 )
+from store.services.pricing import calcular_costo_delivery, haversine_metros
 
 
 class ProductScopeEnum(Enum):
@@ -195,6 +198,10 @@ class Query(graphene.ObjectType):
         id=graphene.ID(required=True),
     )
     my_driver_profile = graphene.Field(DriverProfileType)
+    delivery_tarifas = graphene.Field(TarifaDeliveryType)
+
+    def resolve_delivery_tarifas(self, info):
+        return TarifaDelivery.vigente()
 
     def resolve_me(self, info):
         user = info.context.user
@@ -893,7 +900,10 @@ class CreateServiceRequest(graphene.Mutation):
         dropoff_lat = graphene.Float(required=False)
         dropoff_lng = graphene.Float(required=False)
         notas = graphene.String(required=False)
-        costo_estimado = graphene.Float(required=False)
+        costo_estimado = graphene.Float(
+            required=False,
+            description="Obsoleto: el costo lo calcula el servidor según la tarifa vigente.",
+        )
 
     service_request = graphene.Field(ServiceRequestType)
 
@@ -952,9 +962,6 @@ class CreateServiceRequest(graphene.Mutation):
         if dropoff_lng is not None:
             servicio.dropoff_lng = Decimal(str(dropoff_lng))
 
-        if costo_estimado is not None:
-            servicio.costo_estimado = Decimal(str(costo_estimado))
-
         # Best-effort: calcular ruta usando Mapbox si tenemos coordenadas.
         has_coordinates = (
             servicio.pickup_lat is not None
@@ -979,6 +986,19 @@ class CreateServiceRequest(graphene.Mutation):
             except Exception:
                 # No interrumpir la creación ante errores de red u otros.
                 pass
+            if servicio.distancia_metros is None:
+                servicio.distancia_metros = haversine_metros(
+                    float(servicio.pickup_lat),
+                    float(servicio.pickup_lng),
+                    float(servicio.dropoff_lat),
+                    float(servicio.dropoff_lng),
+                )
+
+        if (
+            tipo_value == ServiceRequest.TIPO_DELIVERY
+            and servicio.distancia_metros is not None
+        ):
+            servicio.costo_estimado = calcular_costo_delivery(servicio.distancia_metros)
 
         servicio.save()
 
@@ -1148,7 +1168,10 @@ class UpdateServiceRequestStatus(graphene.Mutation):
 
         try:
             servicio = ServiceRequest.objects.select_related(
-                "driver", "cliente", "store_order__usuario"
+                "driver",
+                "cliente",
+                "store_order__usuario",
+                "store_order__producto__tienda__usuario",
             ).get(pk=service_request_id)
         except ServiceRequest.DoesNotExist as exc:
             raise GraphQLError("Solicitud no encontrada") from exc
@@ -1185,7 +1208,36 @@ class UpdateServiceRequestStatus(graphene.Mutation):
         servicio.estado = estado_value
         if estado_value == ServiceRequest.ESTADO_COMPLETADO:
             servicio.completado_en = timezone.now()
-        servicio.save(update_fields=["estado", "completado_en", "actualizado"])
+
+        with transaction.atomic():
+            servicio.save(update_fields=["estado", "completado_en", "actualizado"])
+
+            order = servicio.store_order
+            if (
+                estado_value == ServiceRequest.ESTADO_COMPLETADO
+                and order is not None
+                and order.estado == StoreOrder.ESTADO_EN_CURSO
+            ):
+                # El signal notificar_orden avisa al comprador del cambio de estado.
+                order.estado = StoreOrder.ESTADO_COMPLETADO
+                order.save(update_fields=["estado", "actualizado"])
+
+                tienda_user_id = (
+                    order.producto.tienda.usuario_id
+                    if order.producto and order.producto.tienda
+                    else None
+                )
+                if tienda_user_id:
+                    Notificacion.objects.create(
+                        usuario_id=tienda_user_id,
+                        titulo="Orden entregada",
+                        mensaje=(
+                            f"La orden #{order.id} fue entregada por el conductor "
+                            "y se marcó como completada."
+                        ),
+                        tipo=Notificacion.TIPO_ORDEN,
+                        data={"order_id": order.id, "view": "store"},
+                    )
 
         _notificar_transicion_servicio(servicio, estado_value)
 

@@ -59,6 +59,7 @@ from .serializers import (
     OrderPaymentSerializer,
     ProductoFavoritoSerializer,
     NotificacionSerializer,
+    ReporteSerializer,
 )
 from .permissions import EsTienda
 from .services.realtime import broadcast_chat_message, broadcast_chat_read, notify_user
@@ -1002,3 +1003,8 @@ class ExpoPushTokenView(generics.GenericAPIView):
             return Response({'error': 'token requerido.'}, status=status.HTTP_400_BAD_REQUEST)
         ExpoPushToken.objects.filter(token=token, usuario=request.user).delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class ReporteCreateView(generics.CreateAPIView):
+    serializer_class = ReporteSerializer
+    permission_classes = [IsAuthenticated]

@@ -142,6 +142,10 @@ class Tienda(models.Model):
     pago_movil_banco = models.CharField(max_length=60, blank=True, null=True)
     pago_movil_telefono = models.CharField(max_length=15, blank=True, null=True)
     pago_movil_cedula = models.CharField(max_length=20, blank=True, null=True)
+    verificada = models.BooleanField(
+        default=False,
+        help_text='Marcada manualmente por el administrador. Muestra el sello "Verificada" en la app.',
+    )
     creado = models.DateTimeField(auto_now_add=True)
 
     @property
@@ -736,3 +740,62 @@ class PasswordResetCode(models.Model):
 
     def __str__(self):
         return f"ResetCode {self.usuario.email} ({'usado' if self.usado else 'activo'})"
+
+
+class TarifaDelivery(models.Model):
+    """Tarifas del costo de delivery, editables desde el admin sin redeploy."""
+
+    tarifa_base = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('1.00'))
+    tarifa_por_km = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.50'))
+    costo_minimo = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('1.00'))
+    activa = models.BooleanField(default=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-actualizado']
+        verbose_name = 'Tarifa de delivery'
+        verbose_name_plural = 'Tarifas de delivery'
+
+    def __str__(self):
+        return f"Base ${self.tarifa_base} + ${self.tarifa_por_km}/km (mín. ${self.costo_minimo})"
+
+    @classmethod
+    def vigente(cls) -> 'TarifaDelivery':
+        return cls.objects.filter(activa=True).first() or cls()
+
+
+class Reporte(models.Model):
+    MOTIVO_PRODUCTO_ENGANOSO = 'producto_enganoso'
+    MOTIVO_ESTAFA = 'estafa'
+    MOTIVO_CONTENIDO_INAPROPIADO = 'contenido_inapropiado'
+    MOTIVO_SPAM = 'spam'
+    MOTIVO_OTRO = 'otro'
+    MOTIVOS = [
+        (MOTIVO_PRODUCTO_ENGANOSO, 'Producto o servicio engañoso'),
+        (MOTIVO_ESTAFA, 'Posible estafa o fraude'),
+        (MOTIVO_CONTENIDO_INAPROPIADO, 'Contenido inapropiado'),
+        (MOTIVO_SPAM, 'Spam o publicaciones repetidas'),
+        (MOTIVO_OTRO, 'Otro'),
+    ]
+
+    ESTADO_PENDIENTE = 'pendiente'
+    ESTADO_REVISADO = 'revisado'
+    ESTADOS = [
+        (ESTADO_PENDIENTE, 'Pendiente'),
+        (ESTADO_REVISADO, 'Revisado'),
+    ]
+
+    reportante = models.ForeignKey(Usuario, on_delete=models.CASCADE, related_name='reportes')
+    tienda = models.ForeignKey(Tienda, on_delete=models.CASCADE, null=True, blank=True, related_name='reportes')
+    producto = models.ForeignKey(ProductoTienda, on_delete=models.CASCADE, null=True, blank=True, related_name='reportes')
+    motivo = models.CharField(max_length=30, choices=MOTIVOS)
+    descripcion = models.TextField(blank=True)
+    estado = models.CharField(max_length=15, choices=ESTADOS, default=ESTADO_PENDIENTE)
+    creado = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-creado']
+
+    def __str__(self):
+        objetivo = self.producto or self.tienda
+        return f"Reporte #{self.id} ({self.get_motivo_display()}) -> {objetivo}"
