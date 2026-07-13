@@ -1105,6 +1105,27 @@ class StoreDashboardView(generics.GenericAPIView):
             for row in serie_qs
         ]
 
+        # Ventas por canal (sólo completadas)
+        ventas_canal_qs = (
+            completadas
+            .values('canal')
+            .annotate(
+                ordenes=Count('id'),
+                ingresos_usd=Sum('total', filter=Q(moneda='USD')),
+                ingresos_ves=Sum('total', filter=Q(moneda='VES')),
+            )
+        )
+        ventas_por_canal = {
+            StoreOrder.CANAL_ONLINE: {'ordenes': 0, 'ingresos_usd': '0', 'ingresos_ves': '0'},
+            StoreOrder.CANAL_PRESENCIAL: {'ordenes': 0, 'ingresos_usd': '0', 'ingresos_ves': '0'},
+        }
+        for row in ventas_canal_qs:
+            ventas_por_canal[row['canal']] = {
+                'ordenes': row['ordenes'],
+                'ingresos_usd': str(row['ingresos_usd'] or Decimal('0')),
+                'ingresos_ves': str(row['ingresos_ves'] or Decimal('0')),
+            }
+
         tasa = TasaCambio.vigente()
         tasa_data = TasaCambioSerializer(tasa).data if tasa else None
 
@@ -1117,6 +1138,7 @@ class StoreDashboardView(generics.GenericAPIView):
             'productos_top': productos_top,
             'serie_diaria': serie_diaria,
             'tasa_vigente': tasa_data,
+            'ventas_por_canal': ventas_por_canal,
         })
 
 
