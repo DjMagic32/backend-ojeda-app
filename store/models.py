@@ -860,3 +860,39 @@ class MovimientoStock(models.Model):
 
     def __str__(self):
         return f"{self.get_tipo_display()} {self.cantidad:+d} -> {self.producto.nombre} ({self.get_origen_display()})"
+
+
+class ArticuloUsado(models.Model):
+    MONEDA_USD = 'USD'
+    MONEDA_VES = 'VES'
+    MONEDAS = [
+        (MONEDA_USD, 'USD'),
+        (MONEDA_VES, 'VES'),
+    ]
+
+    ESTADO_COMO_NUEVO = 'como_nuevo'
+    ESTADO_BUEN_ESTADO = 'buen_estado'
+    ESTADO_CON_DETALLES = 'con_detalles'
+    ESTADOS_ARTICULO = [
+        (ESTADO_COMO_NUEVO, 'Como nuevo'),
+        (ESTADO_BUEN_ESTADO, 'Buen estado'),
+        (ESTADO_CON_DETALLES, 'Con detalles'),
+    ]
+
+    vendedor = models.ForeignKey(Usuario, on_delete=models.CASCADE, related_name='articulos_usados')
+    titulo = models.CharField(max_length=120)
+    descripcion = models.TextField()
+    precio = models.DecimalField(max_digits=10, decimal_places=2)
+    moneda = models.CharField(max_length=3, choices=MONEDAS, default=MONEDA_USD)
+    estado_articulo = models.CharField(max_length=15, choices=ESTADOS_ARTICULO)
+    imagen = models.ImageField(upload_to='articulos_usados/', null=True, blank=True)
+    imagen_2 = models.ImageField(upload_to='articulos_usados/', null=True, blank=True)
+    activo = models.BooleanField(default=True)
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-creado']
+
+    def __str__(self):
+        return f"{self.titulo} ({self.vendedor.username})"

@@ -27,6 +27,7 @@ from .models import (
     Notificacion,
     Reporte,
     MovimientoStock,
+    ArticuloUsado,
 )
 
 class UsuarioSerializer(serializers.ModelSerializer):
@@ -451,3 +452,26 @@ class VentaPresencialItemSerializer(serializers.Serializer):
 class VentaPresencialSerializer(serializers.Serializer):
     items = VentaPresencialItemSerializer(many=True, allow_empty=False)
     notas = serializers.CharField(required=False, allow_blank=True)
+
+
+class ArticuloUsadoVendedorSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Usuario
+        fields = ['id', 'first_name', 'username', 'telefono']
+
+
+class ArticuloUsadoSerializer(serializers.ModelSerializer):
+    vendedor_detalle = ArticuloUsadoVendedorSerializer(source='vendedor', read_only=True)
+
+    class Meta:
+        model = ArticuloUsado
+        fields = [
+            'id', 'vendedor', 'vendedor_detalle', 'titulo', 'descripcion',
+            'precio', 'moneda', 'estado_articulo', 'imagen', 'imagen_2',
+            'activo', 'creado', 'actualizado',
+        ]
+        read_only_fields = ['id', 'vendedor', 'creado', 'actualizado']
+
+    def create(self, validated_data):
+        validated_data['vendedor'] = self.context['request'].user
+        return super().create(validated_data)

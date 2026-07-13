@@ -35,6 +35,7 @@ from .views import (
     NotificacionUnreadCountView,
     ReporteCreateView,
     VentaPresencialCreateView,
+    ArticuloUsadoViewSet,
 )
 
 router = DefaultRouter()
@@ -49,6 +50,7 @@ router.register(r'comentarios-producto', ComentarioProductoViewSet)
 router.register(r'referencias', ReferenciaViewSet)
 router.register(r'wallets', WalletViewSet)
 router.register(r'conversations', ConversationViewSet, basename='conversations')
+router.register(r'articulos-usados', ArticuloUsadoViewSet, basename='articulos-usados')
 
 urlpatterns = [
     path('', include(router.urls)),

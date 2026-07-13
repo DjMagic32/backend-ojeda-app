@@ -65,8 +65,9 @@ from .serializers import (
     MovimientoStockSerializer,
     AjusteStockSerializer,
     VentaPresencialSerializer,
+    ArticuloUsadoSerializer,
 )
-from .models import MovimientoStock, StoreOrderItem
+from .models import MovimientoStock, StoreOrderItem, ArticuloUsado
 from .permissions import EsTienda
 from .services.realtime import broadcast_chat_message, broadcast_chat_read, notify_user
 from .services.push import send_push_to_user
@@ -1169,3 +1170,33 @@ class ExpoPushTokenView(generics.GenericAPIView):
 class ReporteCreateView(generics.CreateAPIView):
     serializer_class = ReporteSerializer
     permission_classes = [IsAuthenticated]
+
+
+class ArticuloUsadoViewSet(viewsets.ModelViewSet):
+    serializer_class = ArticuloUsadoSerializer
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def get_queryset(self):
+        qs = ArticuloUsado.objects.select_related('vendedor')
+        if self.action == 'list':
+            qs = qs.filter(activo=True)
+        moneda = self.request.query_params.get('moneda')
+        if moneda:
+            qs = qs.filter(moneda=moneda.upper())
+        search = self.request.query_params.get('search')
+        if search:
+            qs = qs.filter(Q(titulo__icontains=search) | Q(descripcion__icontains=search))
+        return qs
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [AllowAny()]
+        return [IsAuthenticated()]
+
+    def get_object(self):
+        obj = super().get_object()
+        if self.action in ('update', 'partial_update', 'destroy'):
+            if obj.vendedor_id != self.request.user.id:
+                from rest_framework.exceptions import PermissionDenied
+                raise PermissionDenied('Solo el vendedor puede modificar este artículo.')
+        return obj

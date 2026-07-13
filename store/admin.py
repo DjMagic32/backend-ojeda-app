@@ -26,6 +26,7 @@ from .models import (
     Wallet,
     DriverProfile,
     ServiceRequest,
+    ArticuloUsado,
 )
 from .analytics.predicciones import realizar_predicciones
 from django.contrib import messages
@@ -240,3 +241,11 @@ class MovimientoStockAdmin(admin.ModelAdmin):
 
     def has_add_permission(self, request):
         return False
+
+
+@admin.register(ArticuloUsado)
+class ArticuloUsadoAdmin(admin.ModelAdmin):
+    list_display = ('id', 'titulo', 'vendedor', 'precio', 'moneda', 'estado_articulo', 'activo', 'creado')
+    search_fields = ('titulo', 'descripcion', 'vendedor__username', 'vendedor__email')
+    list_filter = ('moneda', 'estado_articulo', 'activo', 'creado')
+    list_editable = ('activo',)
