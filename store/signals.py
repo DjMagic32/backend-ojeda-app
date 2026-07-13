@@ -4,7 +4,9 @@ from django.dispatch import receiver
 from .models import (
     Carrito,
     DriverProfile,
+    MovimientoStock,
     Notificacion,
+    ProductoTienda,
     StoreOrder,
     Usuario,
     Wallet,
@@ -101,6 +103,39 @@ def notificar_orden(sender, instance: StoreOrder, created, **kwargs):
         tipo=Notificacion.TIPO_ORDEN,
         data={'order_id': instance.id, 'estado': instance.estado, 'view': 'buyer'},
     )
+
+
+@receiver(post_save, sender=StoreOrder)
+def descontar_stock_orden_completada(sender, instance: StoreOrder, created, **kwargs):
+    """Al completarse una orden online, descuenta stock y deja trazabilidad."""
+    if instance.canal != StoreOrder.CANAL_ONLINE:
+        return
+    if instance.estado != StoreOrder.ESTADO_COMPLETADO:
+        return
+    if not created and getattr(instance, '_estado_previo', None) == instance.estado:
+        return
+    if MovimientoStock.objects.filter(order=instance).exists():
+        return
+
+    from .services.inventario import registrar_movimiento
+
+    items = list(instance.items.select_related('producto'))
+    if not items:
+        items = [instance]
+    for item in items:
+        producto = item.producto
+        if producto.tipo == ProductoTienda.TIPO_SERVICIO or producto.stock is None:
+            continue
+        delta = -min(item.cantidad, producto.stock)
+        if delta == 0:
+            continue
+        registrar_movimiento(
+            producto,
+            MovimientoStock.TIPO_VENTA,
+            delta,
+            MovimientoStock.ORIGEN_ORDEN_ONLINE,
+            order=instance,
+        )
 
 
 @receiver(pre_save, sender=DriverProfile)

@@ -186,6 +186,23 @@ class ProductoTienda(models.Model):
         help_text='Permite recibir pedidos aunque el stock disponible sea insuficiente (venta por encargo).',
     )
     categoria = models.ForeignKey('Categoria', on_delete=models.SET_NULL, null=True, blank=True, related_name='productos_tienda')
+    costo_unitario = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text='Costo de adquisición, para cálculo de margen (visible solo para la tienda).',
+    )
+    codigo_barras = models.CharField(max_length=64, null=True, blank=True, db_index=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['tienda', 'codigo_barras'],
+                condition=models.Q(codigo_barras__isnull=False),
+                name='unique_codigo_barras_por_tienda',
+            ),
+        ]
 
     def __str__(self):
         return f"{self.nombre} - {self.tienda.nombre} ({self.tipo})"
@@ -218,6 +235,13 @@ class StoreOrder(models.Model):
         help_text='Tasa USD→VES vigente al crear la orden (snapshot).',
     )
     estado = models.CharField(max_length=20, choices=ESTADOS, default=ESTADO_PENDIENTE)
+    CANAL_ONLINE = 'online'
+    CANAL_PRESENCIAL = 'presencial'
+    CANALES = [
+        (CANAL_ONLINE, 'En línea'),
+        (CANAL_PRESENCIAL, 'Presencial'),
+    ]
+    canal = models.CharField(max_length=15, choices=CANALES, default=CANAL_ONLINE)
     direccion_entrega = models.CharField(max_length=255, blank=True, null=True)
     notas = models.TextField(blank=True, null=True)
     creado = models.DateTimeField(auto_now_add=True)
@@ -799,3 +823,40 @@ class Reporte(models.Model):
     def __str__(self):
         objetivo = self.producto or self.tienda
         return f"Reporte #{self.id} ({self.get_motivo_display()}) -> {objetivo}"
+
+
+class MovimientoStock(models.Model):
+    TIPO_ENTRADA = 'entrada'
+    TIPO_VENTA = 'venta'
+    TIPO_AJUSTE = 'ajuste'
+    TIPOS = [
+        (TIPO_ENTRADA, 'Entrada'),
+        (TIPO_VENTA, 'Venta'),
+        (TIPO_AJUSTE, 'Ajuste'),
+    ]
+
+    ORIGEN_VENTA_PRESENCIAL = 'venta_presencial'
+    ORIGEN_ORDEN_ONLINE = 'orden_online'
+    ORIGEN_AJUSTE_MANUAL = 'ajuste_manual'
+    ORIGEN_CREACION = 'creacion'
+    ORIGENES = [
+        (ORIGEN_VENTA_PRESENCIAL, 'Venta presencial'),
+        (ORIGEN_ORDEN_ONLINE, 'Orden en línea'),
+        (ORIGEN_AJUSTE_MANUAL, 'Ajuste manual'),
+        (ORIGEN_CREACION, 'Creación de producto'),
+    ]
+
+    producto = models.ForeignKey(ProductoTienda, on_delete=models.CASCADE, related_name='movimientos_stock')
+    tipo = models.CharField(max_length=10, choices=TIPOS)
+    cantidad = models.IntegerField(help_text='Delta con signo: las ventas son negativas.')
+    stock_resultante = models.PositiveIntegerField(null=True, blank=True)
+    origen = models.CharField(max_length=20, choices=ORIGENES)
+    order = models.ForeignKey(StoreOrder, on_delete=models.SET_NULL, null=True, blank=True, related_name='movimientos_stock')
+    creado = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-creado']
+        indexes = [models.Index(fields=['producto', '-creado'], name='store_movim_product_idx')]
+
+    def __str__(self):
+        return f"{self.get_tipo_display()} {self.cantidad:+d} -> {self.producto.nombre} ({self.get_origen_display()})"

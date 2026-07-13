@@ -199,9 +199,28 @@ class Query(graphene.ObjectType):
     )
     my_driver_profile = graphene.Field(DriverProfileType)
     delivery_tarifas = graphene.Field(TarifaDeliveryType)
+    store_product_by_barcode = graphene.Field(
+        ProductoTiendaType,
+        codigo=graphene.String(required=True),
+    )
 
     def resolve_delivery_tarifas(self, info):
         return TarifaDelivery.vigente()
+
+    def resolve_store_product_by_barcode(self, info, codigo):
+        user = info.context.user
+        if not user or not user.is_authenticated:
+            raise GraphQLError("Autenticación requerida")
+        if getattr(user, 'rol', None) != Usuario.ES_TIENDA:
+            raise GraphQLError("Solo las tiendas pueden buscar por código de barras")
+        codigo = (codigo or '').strip()
+        if not codigo:
+            return None
+        return (
+            ProductoTienda.objects.select_related('tienda')
+            .filter(tienda__usuario=user, codigo_barras=codigo)
+            .first()
+        )
 
     def resolve_me(self, info):
         user = info.context.user

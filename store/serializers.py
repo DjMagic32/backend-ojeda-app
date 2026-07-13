@@ -26,6 +26,7 @@ from .models import (
     ProductoFavorito,
     Notificacion,
     Reporte,
+    MovimientoStock,
 )
 
 class UsuarioSerializer(serializers.ModelSerializer):
@@ -52,6 +53,23 @@ class ProductoTiendaSerializer(serializers.ModelSerializer):
         model = ProductoTienda
         fields = '__all__'
         read_only_fields = ['tienda']
+
+    def validate_codigo_barras(self, value):
+        value = (value or '').strip() or None
+        if value is None:
+            return None
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            qs = ProductoTienda.objects.filter(
+                tienda__usuario=request.user, codigo_barras=value
+            )
+            if self.instance:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                raise serializers.ValidationError(
+                    'Ya tienes otro producto con este código de barras.'
+                )
+        return value
 
 class ItemCarritoSerializer(serializers.ModelSerializer):
     subtotal = serializers.ReadOnlyField()
@@ -239,6 +257,7 @@ class StoreOrderSerializer(serializers.ModelSerializer):
             'moneda',
             'tasa_aplicada',
             'estado',
+            'canal',
             'direccion_entrega',
             'notas',
             'pago',
@@ -254,6 +273,7 @@ class StoreOrderSerializer(serializers.ModelSerializer):
             'moneda',
             'tasa_aplicada',
             'estado',
+            'canal',
             'creado',
             'actualizado',
         ]
@@ -399,3 +419,35 @@ class ReporteSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         validated_data['reportante'] = self.context['request'].user
         return super().create(validated_data)
+
+
+class MovimientoStockSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MovimientoStock
+        fields = ['id', 'producto', 'tipo', 'cantidad', 'stock_resultante', 'origen', 'order', 'creado']
+        read_only_fields = fields
+
+
+class AjusteStockSerializer(serializers.Serializer):
+    delta = serializers.IntegerField(required=False)
+    nuevo_stock = serializers.IntegerField(required=False, min_value=0)
+    motivo = serializers.CharField(required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        tiene_delta = 'delta' in attrs
+        tiene_nuevo = 'nuevo_stock' in attrs
+        if tiene_delta == tiene_nuevo:
+            raise serializers.ValidationError('Indica "delta" o "nuevo_stock" (solo uno).')
+        if tiene_delta and attrs['delta'] == 0:
+            raise serializers.ValidationError('El delta no puede ser cero.')
+        return attrs
+
+
+class VentaPresencialItemSerializer(serializers.Serializer):
+    producto_id = serializers.IntegerField()
+    cantidad = serializers.IntegerField(min_value=1)
+
+
+class VentaPresencialSerializer(serializers.Serializer):
+    items = VentaPresencialItemSerializer(many=True, allow_empty=False)
+    notas = serializers.CharField(required=False, allow_blank=True)

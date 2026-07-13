@@ -98,6 +98,7 @@ class ProductoTiendaType(DjangoObjectType):
     average_rating = graphene.Float()
     total_reviews = graphene.Int()
     categoria = graphene.Field(CategoriaType)
+    costo_unitario = graphene.Float()
 
     class Meta:
         model = ProductoTienda
@@ -115,10 +116,22 @@ class ProductoTiendaType(DjangoObjectType):
             "imagen_3",
             "permite_encargo",
             "categoria",
+            "codigo_barras",
         )
 
     def resolve_tienda(self, info):
         return self.tienda_id
+
+    def resolve_costo_unitario(self, info):
+        user = getattr(info.context, 'user', None)
+        if (
+            user
+            and user.is_authenticated
+            and self.tienda.usuario_id == user.id
+            and self.costo_unitario is not None
+        ):
+            return float(self.costo_unitario)
+        return None
 
     def resolve_tienda_detalle(self, info):
         return self.tienda

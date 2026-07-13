@@ -11,6 +11,7 @@ from .models import (
     ExpoPushToken,
     ItemCarrito,
     Message,
+    MovimientoStock,
     Pedido,
     Producto,
     ProductoTienda,
@@ -228,3 +229,14 @@ class ReporteAdmin(admin.ModelAdmin):
 class TarifaDeliveryAdmin(admin.ModelAdmin):
     list_display = ('id', 'tarifa_base', 'tarifa_por_km', 'costo_minimo', 'activa', 'actualizado')
     list_editable = ('tarifa_base', 'tarifa_por_km', 'costo_minimo', 'activa')
+
+
+@admin.register(MovimientoStock)
+class MovimientoStockAdmin(admin.ModelAdmin):
+    list_display = ('id', 'producto', 'tipo', 'cantidad', 'stock_resultante', 'origen', 'order', 'creado')
+    search_fields = ('producto__nombre', 'producto__tienda__nombre')
+    list_filter = ('tipo', 'origen', 'creado')
+    readonly_fields = ('producto', 'tipo', 'cantidad', 'stock_resultante', 'origen', 'order', 'creado')
+
+    def has_add_permission(self, request):
+        return False

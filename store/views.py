@@ -5,6 +5,8 @@ from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.exceptions import ValidationError
 from drf_spectacular.utils import extend_schema
 
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db import transaction
 from django.db.models import Q
 from rest_framework.decorators import action
 
@@ -60,10 +62,15 @@ from .serializers import (
     ProductoFavoritoSerializer,
     NotificacionSerializer,
     ReporteSerializer,
+    MovimientoStockSerializer,
+    AjusteStockSerializer,
+    VentaPresencialSerializer,
 )
+from .models import MovimientoStock, StoreOrderItem
 from .permissions import EsTienda
 from .services.realtime import broadcast_chat_message, broadcast_chat_read, notify_user
 from .services.push import send_push_to_user
+from .services.inventario import registrar_movimiento
 
 
 class CreateUserView(generics.GenericAPIView):
@@ -376,6 +383,138 @@ class ProductoTiendaViewSet(viewsets.ModelViewSet):
     def perform_update(self, serializer):
         tienda = self._get_tienda_for_request()
         serializer.save(tienda=tienda)
+
+    def _get_own_product(self):
+        tienda = self._get_tienda_for_request()
+        producto = self.get_object()
+        if producto.tienda_id != tienda.id:
+            raise ValidationError('Este producto no pertenece a tu tienda.')
+        return producto
+
+    @action(detail=True, methods=['post'], url_path='ajustar-stock',
+            permission_classes=[IsAuthenticated, EsTienda])
+    def ajustar_stock(self, request, pk=None):
+        producto = self._get_own_product()
+        serializer = AjusteStockSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        if producto.tipo == ProductoTienda.TIPO_SERVICIO:
+            raise ValidationError('Los servicios no manejan stock.')
+
+        if 'nuevo_stock' in data:
+            actual = producto.stock or 0
+            delta = data['nuevo_stock'] - actual
+            if delta == 0 and producto.stock is not None:
+                return Response({'producto_id': producto.id, 'stock': producto.stock, 'movimiento': None})
+        else:
+            delta = data['delta']
+            if producto.stock is None:
+                raise ValidationError('Este producto no tiene control de stock. Usa "nuevo_stock" para definirlo.')
+
+        tipo = MovimientoStock.TIPO_ENTRADA if delta > 0 else MovimientoStock.TIPO_AJUSTE
+        if producto.stock is None:
+            producto.stock = 0
+            producto.save(update_fields=['stock'])
+            tipo = MovimientoStock.TIPO_ENTRADA
+
+        try:
+            movimiento = registrar_movimiento(
+                producto, tipo, delta, MovimientoStock.ORIGEN_AJUSTE_MANUAL
+            )
+        except DjangoValidationError as exc:
+            raise ValidationError(exc.messages[0] if exc.messages else 'El stock no puede quedar negativo.')
+
+        return Response({
+            'producto_id': producto.id,
+            'stock': movimiento.stock_resultante,
+            'movimiento': MovimientoStockSerializer(movimiento).data,
+        })
+
+    @action(detail=True, methods=['get'], url_path='movimientos',
+            permission_classes=[IsAuthenticated, EsTienda])
+    def movimientos(self, request, pk=None):
+        producto = self._get_own_product()
+        movimientos = producto.movimientos_stock.all()[:50]
+        return Response(MovimientoStockSerializer(movimientos, many=True).data)
+
+
+class VentaPresencialCreateView(generics.GenericAPIView):
+    permission_classes = [IsAuthenticated, EsTienda]
+    serializer_class = VentaPresencialSerializer
+
+    def post(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        try:
+            tienda = Tienda.objects.get(usuario=request.user)
+        except Tienda.DoesNotExist:
+            raise ValidationError('El usuario autenticado no tiene una tienda asociada.')
+
+        producto_ids = [item['producto_id'] for item in data['items']]
+        productos = {
+            p.id: p
+            for p in ProductoTienda.objects.filter(id__in=producto_ids, tienda=tienda)
+        }
+        faltantes = [pid for pid in producto_ids if pid not in productos]
+        if faltantes:
+            raise ValidationError('Algunos productos no pertenecen a tu tienda o no existen.')
+
+        monedas = {productos[pid].moneda for pid in producto_ids}
+        if len(monedas) > 1:
+            raise ValidationError('No puedes mezclar productos en USD y VES en un mismo ticket.')
+        moneda = monedas.pop()
+
+        tasa = TasaCambio.vigente()
+
+        try:
+            with transaction.atomic():
+                total = sum(
+                    productos[item['producto_id']].precio * item['cantidad']
+                    for item in data['items']
+                )
+                primer_producto = productos[data['items'][0]['producto_id']]
+                order = StoreOrder.objects.create(
+                    usuario=request.user,
+                    producto=primer_producto,
+                    cantidad=data['items'][0]['cantidad'],
+                    precio_unitario=primer_producto.precio,
+                    total=total,
+                    moneda=moneda,
+                    tasa_aplicada=tasa.valor_bs if tasa else None,
+                    estado=StoreOrder.ESTADO_COMPLETADO,
+                    canal=StoreOrder.CANAL_PRESENCIAL,
+                    notas=data.get('notas') or None,
+                )
+                movimientos = []
+                for item in data['items']:
+                    producto = productos[item['producto_id']]
+                    StoreOrderItem.objects.create(
+                        order=order,
+                        producto=producto,
+                        cantidad=item['cantidad'],
+                        precio_unitario=producto.precio,
+                        subtotal=producto.precio * item['cantidad'],
+                    )
+                    movimientos.append(registrar_movimiento(
+                        producto,
+                        MovimientoStock.TIPO_VENTA,
+                        -item['cantidad'],
+                        MovimientoStock.ORIGEN_VENTA_PRESENCIAL,
+                        order=order,
+                    ))
+        except DjangoValidationError as exc:
+            raise ValidationError(exc.messages[0] if exc.messages else 'No se pudo registrar la venta.')
+
+        return Response(
+            {
+                'order': StoreOrderSerializer(order, context={'request': request}).data,
+                'movimientos': MovimientoStockSerializer(movimientos, many=True).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class StoreOrderViewSet(viewsets.ModelViewSet):
