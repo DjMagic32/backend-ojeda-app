@@ -49,6 +49,13 @@ class ProductoSerializer(serializers.ModelSerializer):
 
 class ProductoTiendaSerializer(serializers.ModelSerializer):
     tienda_nombre = serializers.CharField(source='tienda.nombre', read_only=True)
+    # El UniqueConstraint parcial (tienda, codigo_barras) hace que DRF fuerce
+    # required=True sobre este campo aunque el modelo sea null/blank. Lo
+    # declaramos explícito para que sea opcional; la unicidad por tienda se
+    # valida en validate_codigo_barras.
+    codigo_barras = serializers.CharField(
+        max_length=64, required=False, allow_null=True, allow_blank=True
+    )
 
     class Meta:
         model = ProductoTienda

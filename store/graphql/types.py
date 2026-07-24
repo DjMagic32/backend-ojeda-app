@@ -18,6 +18,19 @@ from store.models import (
 )
 
 
+def _delivery_activo(order):
+    """Servicio de entrega vigente (no cancelado) más reciente de una orden.
+
+    Se define a nivel de módulo porque en los resolvers de graphene ``self`` es
+    la instancia del modelo ``StoreOrder`` (el root), no la del ``ObjectType``.
+    """
+    return (
+        order.service_requests.exclude(estado=ServiceRequest.ESTADO_CANCELADO)
+        .order_by('-creado')
+        .first()
+    )
+
+
 def _absolute_uri(info, file_field):
     if not file_field:
         return None
@@ -328,19 +341,12 @@ class StoreOrderType(DjangoObjectType):
     def resolve_items(self, info):
         return self.items.all()
 
-    def _delivery_activo(self):
-        return (
-            self.service_requests.exclude(estado=ServiceRequest.ESTADO_CANCELADO)
-            .order_by('-creado')
-            .first()
-        )
-
     def resolve_delivery_service_id(self, info):
-        servicio = self._delivery_activo()
+        servicio = _delivery_activo(self)
         return servicio.id if servicio else None
 
     def resolve_delivery_estado(self, info):
-        servicio = self._delivery_activo()
+        servicio = _delivery_activo(self)
         return servicio.estado if servicio else None
 
     def resolve_producto(self, info):
