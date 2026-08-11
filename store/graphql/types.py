@@ -472,6 +472,7 @@ class ServiceRequestType(DjangoObjectType):
             "notas",
             "asignado_en",
             "completado_en",
+            "cancelado_en",
             "creado",
             "actualizado",
         )

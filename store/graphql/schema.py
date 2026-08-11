@@ -1227,9 +1227,18 @@ class UpdateServiceRequestStatus(graphene.Mutation):
         servicio.estado = estado_value
         if estado_value == ServiceRequest.ESTADO_COMPLETADO:
             servicio.completado_en = timezone.now()
+        elif estado_value == ServiceRequest.ESTADO_CANCELADO:
+            servicio.cancelado_en = timezone.now()
 
         with transaction.atomic():
-            servicio.save(update_fields=["estado", "completado_en", "actualizado"])
+            servicio.save(
+                update_fields=[
+                    "estado",
+                    "completado_en",
+                    "cancelado_en",
+                    "actualizado",
+                ]
+            )
 
             order = servicio.store_order
             if (

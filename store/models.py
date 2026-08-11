@@ -368,6 +368,7 @@ class ServiceRequest(models.Model):
     codigo_entrega = models.CharField(max_length=6, blank=True, null=True, editable=False)
     asignado_en = models.DateTimeField(blank=True, null=True)
     completado_en = models.DateTimeField(blank=True, null=True)
+    cancelado_en = models.DateTimeField(blank=True, null=True)
     creado = models.DateTimeField(auto_now_add=True)
     actualizado = models.DateTimeField(auto_now=True)
 
@@ -399,6 +400,11 @@ class ServiceRequest(models.Model):
         self.estado = self.ESTADO_COMPLETADO
         self.completado_en = timezone.now()
         self.save(update_fields=['estado', 'completado_en', 'actualizado'])
+
+    def marcar_cancelado(self):
+        self.estado = self.ESTADO_CANCELADO
+        self.cancelado_en = timezone.now()
+        self.save(update_fields=['estado', 'cancelado_en', 'actualizado'])
 
     def __str__(self):
         return f"Servicio #{self.id} ({self.tipo}) - {self.estado}"
