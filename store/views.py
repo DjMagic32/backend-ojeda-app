@@ -1179,7 +1179,13 @@ class ArticuloUsadoViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         qs = ArticuloUsado.objects.select_related('vendedor')
         if self.action == 'list':
-            qs = qs.filter(activo=True)
+            mine = self.request.query_params.get('mine')
+            if mine:
+                if not self.request.user.is_authenticated:
+                    return ArticuloUsado.objects.none()
+                qs = qs.filter(vendedor=self.request.user)
+            else:
+                qs = qs.filter(activo=True)
         moneda = self.request.query_params.get('moneda')
         if moneda:
             qs = qs.filter(moneda=moneda.upper())

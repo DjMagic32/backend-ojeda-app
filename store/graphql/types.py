@@ -49,6 +49,7 @@ def _absolute_uri(info, file_field):
 class TiendaType(DjangoObjectType):
     usuario = graphene.Int()
     logo = graphene.String()
+    banner = graphene.String()
     pago_movil_configurado = graphene.Boolean()
 
     class Meta:
@@ -57,9 +58,11 @@ class TiendaType(DjangoObjectType):
             "id",
             "usuario",
             "nombre",
+            "descripcion",
             "direccion",
             "telefono",
             "logo",
+            "banner",
             "informacion_fiscal",
             "ubicacion_lat",
             "ubicacion_lng",
@@ -76,6 +79,9 @@ class TiendaType(DjangoObjectType):
 
     def resolve_logo(self, info):
         return _absolute_uri(info, self.logo)
+
+    def resolve_banner(self, info):
+        return _absolute_uri(info, self.banner)
 
 
 class TarifaDeliveryType(graphene.ObjectType):
@@ -130,6 +136,7 @@ class ProductoTiendaType(DjangoObjectType):
             "permite_encargo",
             "categoria",
             "codigo_barras",
+            "destacado",
         )
 
     def resolve_tienda(self, info):

@@ -128,9 +128,17 @@ class DriverProfile(models.Model):
 class Tienda(models.Model):
     usuario = models.OneToOneField(Usuario, on_delete=models.CASCADE, limit_choices_to={'rol': Usuario.ES_TIENDA})
     nombre = models.CharField(max_length=200)
+    descripcion = models.TextField(
+        blank=True, null=True,
+        help_text='Descripción pública de la tienda, visible en su perfil.',
+    )
     direccion = models.TextField(blank=True, null=True)
     telefono = models.CharField(max_length=15, blank=True, null=True)
     logo = models.ImageField(upload_to='logos/', blank=True, null=True)
+    banner = models.ImageField(
+        upload_to='banners/', blank=True, null=True,
+        help_text='Imagen de portada del perfil público de la tienda.',
+    )
     informacion_fiscal = models.TextField(blank=True, null=True)
     ubicacion_lat = models.DecimalField(
         max_digits=9, decimal_places=6, null=True, blank=True,
@@ -194,6 +202,10 @@ class ProductoTienda(models.Model):
         help_text='Costo de adquisición, para cálculo de margen (visible solo para la tienda).',
     )
     codigo_barras = models.CharField(max_length=64, null=True, blank=True, db_index=True)
+    destacado = models.BooleanField(
+        default=False,
+        help_text='Producto estrella: se muestra primero en el catálogo público de la tienda.',
+    )
 
     class Meta:
         constraints = [
@@ -203,6 +215,7 @@ class ProductoTienda(models.Model):
                 name='unique_codigo_barras_por_tienda',
             ),
         ]
+        ordering = ['-destacado', '-id']
 
     def __str__(self):
         return f"{self.nombre} - {self.tienda.nombre} ({self.tipo})"
