@@ -1611,6 +1611,49 @@ class ResetPassword(graphene.Mutation):
         return ResetPassword(ok=True)
 
 
+class ChangePassword(graphene.Mutation):
+    """Cambia la contraseña de un usuario autenticado, verificando la actual."""
+
+    class Arguments:
+        current_password = graphene.String(required=True)
+        new_password = graphene.String(required=True)
+
+    ok = graphene.Boolean()
+
+    @staticmethod
+    def mutate(root, info, current_password: str, new_password: str):
+        user = info.context.user
+        if not user or not user.is_authenticated:
+            raise GraphQLError("Autenticación requerida")
+
+        if len(new_password or "") < 8:
+            raise GraphQLError("La nueva contraseña debe tener al menos 8 caracteres")
+
+        if not user.check_password(current_password or ""):
+            raise GraphQLError("La contraseña actual es incorrecta")
+
+        user.set_password(new_password)
+        user.save(update_fields=["password"])
+
+        try:
+            send_app_email(
+                subject="TuPlaza – Tu contraseña fue cambiada",
+                message=(
+                    f"Hola {user.first_name or ''}\n\n"
+                    "Tu contraseña se cambió correctamente desde tu perfil.\n\n"
+                    "Si no fuiste tú, solicita de inmediato un nuevo código "
+                    "de recuperación desde la app para proteger tu cuenta."
+                ),
+                recipient=user.email,
+            )
+        except Exception:
+            logger.warning(
+                "No se pudo enviar el aviso de cambio de contraseña a %s",
+                user.email,
+            )
+        return ChangePassword(ok=True)
+
+
 class Mutation(graphene.ObjectType):
     login = Login.Field()
     google_login = GoogleLogin.Field()
@@ -1618,6 +1661,7 @@ class Mutation(graphene.ObjectType):
     complete_my_profile = CompleteMyProfile.Field()
     request_password_reset = RequestPasswordReset.Field()
     reset_password = ResetPassword.Field()
+    change_password = ChangePassword.Field()
     delete_my_account = DeleteMyAccount.Field()
     create_store_order = CreateStoreOrder.Field()
     checkout_cart = CheckoutCart.Field()

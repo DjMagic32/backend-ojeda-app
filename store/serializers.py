@@ -36,6 +36,11 @@ class UsuarioSerializer(serializers.ModelSerializer):
     class Meta:
         model = Usuario
         fields = '__all__'
+        # write_only: lo más importante es que el hash de la contraseña
+        # nunca se incluya en las respuestas. El cambio real de contraseña
+        # pasa por set_password en las mutations dedicadas
+        # (ChangePassword/ResetPassword), no por este serializer.
+        extra_kwargs = {'password': {'write_only': True}}
 
 class CategoriaSerializer(serializers.ModelSerializer):
     class Meta:

@@ -188,9 +188,17 @@ class EmailDisponibleView(generics.GenericAPIView):
 
 
 class UsuarioViewSet(viewsets.ModelViewSet):
-    #permission_classes = [IsAuthenticated]
-    queryset = Usuario.objects.all()
+    permission_classes = [IsAuthenticated]
     serializer_class = UsuarioSerializer
+
+    def get_queryset(self):
+        # Sin esto, cualquier usuario autenticado podía leer, editar o
+        # borrar la cuenta de CUALQUIER otro usuario por id (broken access
+        # control). Se limita a la propia cuenta salvo que sea staff.
+        user = self.request.user
+        if user.is_staff:
+            return Usuario.objects.all()
+        return Usuario.objects.filter(pk=user.pk)
 
 class CategoriaViewSet(viewsets.ModelViewSet):
     permission_classes = [AllowAny]

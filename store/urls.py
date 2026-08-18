@@ -39,7 +39,7 @@ from .views import (
 )
 
 router = DefaultRouter()
-router.register(r'usuarios', UsuarioViewSet)
+router.register(r'usuarios', UsuarioViewSet, basename='usuarios')
 router.register(r'tiendas', TiendaViewSet)
 router.register(r'productos-tienda', ProductoTiendaViewSet)
 router.register(r'store-orders', StoreOrderViewSet, basename='store-orders')
