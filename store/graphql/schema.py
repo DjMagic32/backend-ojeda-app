@@ -26,6 +26,7 @@ from store.models import (
     PasswordResetCode,
     ProductoTienda,
     ServiceRequest,
+    ServiceRequestCandidate,
     StoreOrder,
     StoreOrderItem,
     StoreOrderReview,
@@ -389,7 +390,7 @@ class Query(graphene.ObjectType):
                 driver_qs = driver_qs | base_queryset.filter(
                     driver__isnull=True,
                     estado=ServiceRequest.ESTADO_PENDIENTE,
-                ).exclude(cliente=user)
+                ).exclude(cliente=user).exclude(candidates__driver=user)
             return list(driver_qs.distinct())
 
         return list(base_queryset.filter(cliente=user))
@@ -1057,49 +1058,83 @@ class AssignServiceRequest(graphene.Mutation):
             raise GraphQLError("Solicitud no encontrada") from exc
 
         if servicio.estado != ServiceRequest.ESTADO_PENDIENTE or servicio.driver_id:
-            raise GraphQLError("La solicitud ya fue tomada o no está disponible")
+            raise GraphQLError("La solicitud ya no está disponible para postulaciones")
 
         if servicio.cliente_id == user.id:
             raise GraphQLError("No puedes tomar una solicitud creada por ti mismo")
 
-        servicio.marcar_asignado(driver=user)
+        candidate, created = ServiceRequestCandidate.objects.get_or_create(
+            service_request=servicio,
+            driver=user,
+            defaults={'estado': ServiceRequestCandidate.ESTADO_POSTULADO},
+        )
+        if not created and candidate.estado != ServiceRequestCandidate.ESTADO_POSTULADO:
+            raise GraphQLError("Ya no puedes postularte a esta solicitud")
 
-        # Canal de chat conductor <-> solicitante disponible desde ya.
-        Conversation.get_or_create_between(servicio.cliente, user)
-
-        driver_nombre = user.first_name or 'Un conductor'
-        receptor = servicio.receptor_codigo
-        if receptor.id == servicio.cliente_id:
-            Notificacion.objects.create(
-                usuario_id=servicio.cliente_id,
-                titulo='¡Conductor asignado!',
-                mensaje=(
-                    f'{driver_nombre} tomó tu solicitud. Tu código de confirmación es '
-                    f'{servicio.codigo_entrega}. Dáselo al conductor al finalizar.'
-                ),
-                tipo=Notificacion.TIPO_SERVICIO,
-                data={'service_id': servicio.id},
-            )
-        else:
-            Notificacion.objects.create(
-                usuario_id=servicio.cliente_id,
-                titulo='¡Conductor asignado!',
-                mensaje=f'{driver_nombre} tomó tu solicitud y va en camino.',
-                tipo=Notificacion.TIPO_SERVICIO,
-                data={'service_id': servicio.id},
-            )
-            Notificacion.objects.create(
-                usuario_id=receptor.id,
-                titulo='Tu pedido va en camino',
-                mensaje=(
-                    f'Tu código de entrega es {servicio.codigo_entrega}. '
-                    'Dáselo al conductor cuando recibas tu paquete.'
-                ),
-                tipo=Notificacion.TIPO_SERVICIO,
-                data={'service_id': servicio.id},
-            )
+        Notificacion.objects.create(
+            usuario_id=servicio.cliente_id,
+            titulo='Nuevo conductor disponible',
+            mensaje='Un conductor se postuló. Revisa sus datos y escógelo si te conviene.',
+            tipo=Notificacion.TIPO_SERVICIO,
+            data={'service_id': servicio.id},
+        )
 
         return AssignServiceRequest(service_request=servicio)
+
+
+class SelectServiceRequestDriver(graphene.Mutation):
+    class Arguments:
+        service_request_id = graphene.ID(required=True)
+        driver_id = graphene.ID(required=True)
+
+    service_request = graphene.Field(ServiceRequestType)
+
+    @staticmethod
+    def mutate(root, info, service_request_id: int, driver_id: int):
+        user = info.context.user
+        if not user or not user.is_authenticated:
+            raise GraphQLError('Autenticación requerida')
+        servicio = ServiceRequest.objects.select_related('cliente').filter(
+            pk=service_request_id, cliente=user
+        ).first()
+        if not servicio or servicio.estado != ServiceRequest.ESTADO_PENDIENTE:
+            raise GraphQLError('La solicitud ya no está disponible')
+        candidate = ServiceRequestCandidate.objects.filter(
+            service_request=servicio,
+            driver_id=driver_id,
+            estado=ServiceRequestCandidate.ESTADO_POSTULADO,
+        ).select_related('driver').first()
+        if not candidate:
+            raise GraphQLError('Ese conductor ya no está disponible')
+
+        with transaction.atomic():
+            servicio.marcar_asignado(driver=candidate.driver)
+            ServiceRequestCandidate.objects.filter(service_request=servicio).exclude(
+                pk=candidate.pk
+            ).update(estado=ServiceRequestCandidate.ESTADO_RECHAZADO)
+            candidate.estado = ServiceRequestCandidate.ESTADO_SELECCIONADO
+            candidate.save(update_fields=['estado', 'actualizado'])
+
+        Conversation.get_or_create_between(servicio.cliente, candidate.driver)
+        driver_nombre = candidate.driver.first_name or 'Tu conductor'
+        Notificacion.objects.create(
+            usuario_id=servicio.cliente_id,
+            titulo='Conductor seleccionado',
+            mensaje=(
+                f'{driver_nombre} fue seleccionado. Verifica el vehículo al recoger '
+                'y comparte el código para confirmar el inicio.'
+            ),
+            tipo=Notificacion.TIPO_SERVICIO,
+            data={'service_id': servicio.id},
+        )
+        Notificacion.objects.create(
+            usuario_id=candidate.driver_id,
+            titulo='Te seleccionaron para un servicio',
+            mensaje='Dirígete al punto de recogida y solicita el código antes de iniciar.',
+            tipo=Notificacion.TIPO_SERVICIO,
+            data={'service_id': servicio.id},
+        )
+        return SelectServiceRequestDriver(service_request=servicio)
 
 
 SERVICE_TRANSICIONES_VALIDAS = {
@@ -1113,9 +1148,7 @@ SERVICE_TRANSICIONES_VALIDAS = {
         ServiceRequest.ESTADO_EN_CURSO,
         ServiceRequest.ESTADO_CANCELADO,
     },
-    ServiceRequest.ESTADO_EN_CURSO: {
-        ServiceRequest.ESTADO_LLEGO_DESTINO,
-    },
+    ServiceRequest.ESTADO_EN_CURSO: {ServiceRequest.ESTADO_LLEGO_DESTINO},
     ServiceRequest.ESTADO_LLEGO_DESTINO: {ServiceRequest.ESTADO_COMPLETADO},
 }
 
@@ -1218,10 +1251,10 @@ class UpdateServiceRequestStatus(graphene.Mutation):
         if estado_value in SERVICE_ESTADOS_SOLO_CONDUCTOR and not is_driver:
             raise GraphQLError("Solo el conductor asignado puede marcar este estado")
 
-        if estado_value == ServiceRequest.ESTADO_COMPLETADO:
+        if estado_value == ServiceRequest.ESTADO_EN_CURSO:
             if not codigo_entrega or codigo_entrega.strip() != servicio.codigo_entrega:
                 raise GraphQLError(
-                    "Código de confirmación inválido. Pídele el código a quien recibe."
+                    "Código inválido. Verifica el vehículo y pide el código al usuario antes de iniciar."
                 )
 
         servicio.estado = estado_value
@@ -1681,4 +1714,5 @@ class Mutation(graphene.ObjectType):
     update_tienda_ubicacion = UpdateTiendaUbicacion.Field()
     create_service_request = CreateServiceRequest.Field()
     assign_service_request = AssignServiceRequest.Field()
+    select_service_request_driver = SelectServiceRequestDriver.Field()
     update_service_request_status = UpdateServiceRequestStatus.Field()

@@ -423,6 +423,41 @@ class ServiceRequest(models.Model):
         return f"Servicio #{self.id} ({self.tipo}) - {self.estado}"
 
 
+class ServiceRequestCandidate(models.Model):
+    ESTADO_POSTULADO = 'applied'
+    ESTADO_RECHAZADO = 'rejected'
+    ESTADO_SELECCIONADO = 'selected'
+    ESTADOS = [
+        (ESTADO_POSTULADO, 'Postulado'),
+        (ESTADO_RECHAZADO, 'Rechazado'),
+        (ESTADO_SELECCIONADO, 'Seleccionado'),
+    ]
+
+    service_request = models.ForeignKey(
+        ServiceRequest,
+        on_delete=models.CASCADE,
+        related_name='candidates',
+    )
+    driver = models.ForeignKey(
+        Usuario,
+        on_delete=models.CASCADE,
+        related_name='service_request_candidates',
+        limit_choices_to={'es_conductor': True},
+    )
+    estado = models.CharField(max_length=20, choices=ESTADOS, default=ESTADO_POSTULADO)
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['creado']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['service_request', 'driver'],
+                name='unique_service_request_candidate',
+            ),
+        ]
+
+
 class StoreOrderReview(models.Model):
     order = models.OneToOneField(
         StoreOrder,

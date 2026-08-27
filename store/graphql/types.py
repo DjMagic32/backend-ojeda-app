@@ -8,6 +8,7 @@ from store.models import (
     OrderPayment,
     ProductoTienda,
     ServiceRequest,
+    ServiceRequestCandidate,
     StoreOrder,
     StoreOrderItem,
     StoreOrderReview,
@@ -456,6 +457,7 @@ class ServiceRequestType(DjangoObjectType):
     driver_detalle = graphene.Field(UsuarioType)
     codigo_entrega = graphene.String()
     conversation_id = graphene.Int()
+    candidates = graphene.List(lambda: ServiceRequestCandidateType)
 
     class Meta:
         model = ServiceRequest
@@ -515,3 +517,33 @@ class ServiceRequestType(DjangoObjectType):
             return None
         conversacion, _ = Conversation.get_or_create_between(self.cliente, self.driver)
         return conversacion.id
+
+    def resolve_candidates(self, info):
+        user = info.context.user
+        if not user or not user.is_authenticated or user.id != self.cliente_id:
+            return []
+        return self.candidates.select_related('driver', 'driver__perfil_conductor').filter(
+            estado=ServiceRequestCandidate.ESTADO_POSTULADO
+        )
+
+
+class ServiceRequestCandidateType(DjangoObjectType):
+    driver = graphene.Int()
+    driver_detalle = graphene.Field(UsuarioType)
+    driver_profile = graphene.Field(DriverProfileType)
+
+    class Meta:
+        model = ServiceRequestCandidate
+        fields = ('id', 'driver', 'estado', 'creado', 'actualizado')
+
+    def resolve_driver(self, info):
+        return self.driver_id
+
+    def resolve_driver_detalle(self, info):
+        return self.driver
+
+    def resolve_driver_profile(self, info):
+        try:
+            return self.driver.perfil_conductor
+        except DriverProfile.DoesNotExist:
+            return None
