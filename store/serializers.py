@@ -3,6 +3,8 @@ from typing import Any
 
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 from .models import (
     Producto,
     Categoria,
@@ -155,6 +157,13 @@ class RegisterUserSerializer(serializers.Serializer):
             'min_length': 'La contraseña debe tener al menos 8 caracteres.'
         },
     )
+
+    def validate_password(self, value):
+        try:
+            validate_password(value)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(exc.messages) from exc
+        return value
     nombre = serializers.CharField(required=False, allow_blank=True)
     apellido = serializers.CharField(required=False, allow_blank=True)
     rol = serializers.ChoiceField(choices=Usuario.ROLES, default=Usuario.ES_CLIENTE)

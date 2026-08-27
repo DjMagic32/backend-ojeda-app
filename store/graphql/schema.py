@@ -8,6 +8,7 @@ from graphene import Enum
 from graphql import GraphQLError
 from django.conf import settings
 from django.contrib.auth import authenticate
+from django.contrib.auth.password_validation import validate_password
 from store.services.mail import send_app_email
 from django.db import transaction
 from django.db.models import Q, QuerySet, Sum
@@ -1570,6 +1571,10 @@ class ResetPassword(graphene.Mutation):
         codigo = (codigo or "").strip()
         if len(new_password or "") < 8:
             raise GraphQLError("La contraseña debe tener al menos 8 caracteres")
+        try:
+            validate_password(new_password, user)
+        except Exception as exc:
+            raise GraphQLError(str(exc)) from exc
 
         user = Usuario.objects.filter(email=email, is_active=True).first()
         reset_code = (
@@ -1628,6 +1633,10 @@ class ChangePassword(graphene.Mutation):
 
         if len(new_password or "") < 8:
             raise GraphQLError("La nueva contraseña debe tener al menos 8 caracteres")
+        try:
+            validate_password(new_password, user)
+        except Exception as exc:
+            raise GraphQLError(str(exc)) from exc
 
         if not user.check_password(current_password or ""):
             raise GraphQLError("La contraseña actual es incorrecta")
