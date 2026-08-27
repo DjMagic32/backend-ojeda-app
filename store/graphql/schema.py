@@ -1115,7 +1115,6 @@ SERVICE_TRANSICIONES_VALIDAS = {
     },
     ServiceRequest.ESTADO_EN_CURSO: {
         ServiceRequest.ESTADO_LLEGO_DESTINO,
-        ServiceRequest.ESTADO_COMPLETADO,
     },
     ServiceRequest.ESTADO_LLEGO_DESTINO: {ServiceRequest.ESTADO_COMPLETADO},
 }
