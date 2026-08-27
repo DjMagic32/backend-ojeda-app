@@ -148,7 +148,13 @@ class WalletSerializer(serializers.ModelSerializer):
 
 class RegisterUserSerializer(serializers.Serializer):
     email = serializers.EmailField()
-    password = serializers.CharField(write_only=True)
+    password = serializers.CharField(
+        write_only=True,
+        min_length=8,
+        error_messages={
+            'min_length': 'La contraseña debe tener al menos 8 caracteres.'
+        },
+    )
     nombre = serializers.CharField(required=False, allow_blank=True)
     apellido = serializers.CharField(required=False, allow_blank=True)
     rol = serializers.ChoiceField(choices=Usuario.ROLES, default=Usuario.ES_CLIENTE)
