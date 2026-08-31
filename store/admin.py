@@ -25,6 +25,7 @@ from .models import (
     Usuario,
     Wallet,
     DriverProfile,
+    Lugar,
     ServiceRequest,
     ArticuloUsado,
 )
@@ -182,6 +183,14 @@ class DriverProfileAdmin(admin.ModelAdmin):
     list_display = ('usuario', 'estado', 'vehiculo_tipo', 'vehiculo_placa', 'actualizado')
     search_fields = ('usuario__username', 'vehiculo_placa', 'licencia_numero')
     list_filter = ('estado', 'vehiculo_tipo')
+
+
+@admin.register(Lugar)
+class LugarAdmin(admin.ModelAdmin):
+    list_display = ('nombre', 'categoria', 'direccion', 'lat', 'lng', 'activo', 'actualizado')
+    search_fields = ('nombre', 'alias', 'direccion')
+    list_filter = ('categoria', 'activo')
+    list_editable = ('activo',)
 
 
 @admin.register(Conversation)

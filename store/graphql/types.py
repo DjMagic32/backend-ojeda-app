@@ -5,6 +5,7 @@ from graphene_django import DjangoObjectType
 from store.models import (
     Conversation,
     DriverProfile,
+    Lugar,
     OrderPayment,
     ProductoTienda,
     ServiceRequest,
@@ -451,6 +452,32 @@ class DriverProfileType(DjangoObjectType):
 
     def resolve_licencia_foto(self, info):
         return self.licencia_foto.url if self.licencia_foto else None
+
+
+class LugarType(DjangoObjectType):
+    lat = graphene.Float()
+    lng = graphene.Float()
+    distancia_km = graphene.Float()
+
+    class Meta:
+        model = Lugar
+        fields = (
+            'id',
+            'nombre',
+            'categoria',
+            'direccion',
+            'lat',
+            'lng',
+        )
+
+    def resolve_lat(self, info):
+        return float(self.lat)
+
+    def resolve_lng(self, info):
+        return float(self.lng)
+
+    def resolve_distancia_km(self, info):
+        return getattr(self, '_distancia_km', None)
 
 
 class ServiceRequestType(DjangoObjectType):

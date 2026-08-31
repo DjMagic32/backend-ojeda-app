@@ -125,6 +125,50 @@ class DriverProfile(models.Model):
         return campos_ok and fotos_ok
 
 
+class Lugar(models.Model):
+    CATEGORIA_HOSPITAL = 'hospital'
+    CATEGORIA_CLINICA = 'clinica'
+    CATEGORIA_CENTRO_COMERCIAL = 'centro_comercial'
+    CATEGORIA_MERCADO = 'mercado'
+    CATEGORIA_LOCAL = 'local'
+    CATEGORIA_OTRO = 'otro'
+    CATEGORIAS = [
+        (CATEGORIA_HOSPITAL, 'Hospital'),
+        (CATEGORIA_CLINICA, 'Clínica'),
+        (CATEGORIA_CENTRO_COMERCIAL, 'Centro comercial'),
+        (CATEGORIA_MERCADO, 'Mercado'),
+        (CATEGORIA_LOCAL, 'Local'),
+        (CATEGORIA_OTRO, 'Otro'),
+    ]
+
+    nombre = models.CharField(max_length=160)
+    alias = models.TextField(
+        blank=True,
+        default='',
+        help_text='Nombres alternativos separados por coma para mejorar la búsqueda.',
+    )
+    categoria = models.CharField(
+        max_length=30,
+        choices=CATEGORIAS,
+        default=CATEGORIA_OTRO,
+    )
+    direccion = models.CharField(max_length=255, blank=True, default='')
+    lat = models.DecimalField(max_digits=9, decimal_places=6)
+    lng = models.DecimalField(max_digits=9, decimal_places=6)
+    activo = models.BooleanField(default=True)
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['nombre']
+        indexes = [
+            models.Index(fields=['activo', 'categoria'], name='store_lugar_activo_cat_idx'),
+        ]
+
+    def __str__(self):
+        return f'{self.nombre} ({self.get_categoria_display()})'
+
+
 class Tienda(models.Model):
     usuario = models.OneToOneField(Usuario, on_delete=models.CASCADE, limit_choices_to={'rol': Usuario.ES_TIENDA})
     nombre = models.CharField(max_length=200)

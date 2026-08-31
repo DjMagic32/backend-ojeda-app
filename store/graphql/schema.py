@@ -1,4 +1,5 @@
 import logging
+import unicodedata
 from decimal import Decimal, InvalidOperation
 from math import asin, cos, radians, sin, sqrt
 from typing import Iterable, Optional, Type
@@ -22,6 +23,7 @@ from store.models import (
     Carrito,
     Conversation,
     DriverProfile,
+    Lugar,
     Notificacion,
     PasswordResetCode,
     ProductoTienda,
@@ -38,6 +40,7 @@ from store.models import (
 )
 from .types import (
     DriverProfileType,
+    LugarType,
     ProductoTiendaType,
     TarifaDeliveryType,
     ServiceRequestType,
@@ -115,6 +118,15 @@ def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     dlon = radians(lon2 - lon1)
     a = sin(dlat / 2) ** 2 + cos(rlat1) * cos(rlat2) * sin(dlon / 2) ** 2
     return 2 * earth_radius_km * asin(sqrt(a))
+
+
+def _normalize_place_text(value: str) -> str:
+    decomposed = unicodedata.normalize('NFKD', value or '')
+    without_accents = ''.join(
+        character for character in decomposed
+        if not unicodedata.combining(character)
+    )
+    return ' '.join(without_accents.casefold().split())
 
 
 def _normalize_scope(scope_value, enum_cls: Type[Enum], default_value: str) -> str:
@@ -205,9 +217,48 @@ class Query(graphene.ObjectType):
         ProductoTiendaType,
         codigo=graphene.String(required=True),
     )
+    lugares_cercanos = graphene.List(
+        LugarType,
+        query=graphene.String(),
+        lat=graphene.Float(required=True),
+        lng=graphene.Float(required=True),
+        limit=graphene.Int(default_value=8),
+    )
 
     def resolve_delivery_tarifas(self, info):
         return TarifaDelivery.vigente()
+
+    def resolve_lugares_cercanos(
+        self,
+        info,
+        query: Optional[str] = None,
+        lat: float = 0,
+        lng: float = 0,
+        limit: int = 8,
+    ):
+        if not (-90 <= lat <= 90 and -180 <= lng <= 180):
+            raise GraphQLError('Las coordenadas de búsqueda no son válidas')
+
+        limit = max(1, min(limit or 8, 30))
+        normalized_query = _normalize_place_text(query or '')
+        tokens = normalized_query.split()
+        places = Lugar.objects.filter(activo=True)
+        matches = []
+
+        for place in places:
+            searchable = _normalize_place_text(
+                ' '.join((place.nombre, place.alias, place.direccion, place.categoria))
+            )
+            if tokens and not all(token in searchable for token in tokens):
+                continue
+            distance = _haversine_km(lat, lng, float(place.lat), float(place.lng))
+            place._distancia_km = round(distance, 3)
+            matches.append(place)
+
+        return sorted(
+            matches,
+            key=lambda place: (place._distancia_km, place.nombre.casefold()),
+        )[:limit]
 
     def resolve_store_product_by_barcode(self, info, codigo):
         user = info.context.user
