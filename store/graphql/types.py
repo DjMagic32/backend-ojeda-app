@@ -480,6 +480,18 @@ class LugarType(DjangoObjectType):
         return getattr(self, '_distancia_km', None)
 
 
+class LugarBusquedaType(graphene.ObjectType):
+    id = graphene.String(required=True)
+    nombre = graphene.String(required=True)
+    categoria = graphene.String(required=True)
+    direccion = graphene.String()
+    lat = graphene.Float(required=True)
+    lng = graphene.Float(required=True)
+    distancia_km = graphene.Float()
+    fuente = graphene.String()
+    google_maps_uri = graphene.String()
+
+
 class ServiceRequestType(DjangoObjectType):
     cliente = graphene.Int()
     driver = graphene.Int()

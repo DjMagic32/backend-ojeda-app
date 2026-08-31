@@ -40,6 +40,7 @@ from store.models import (
 )
 from .types import (
     DriverProfileType,
+    LugarBusquedaType,
     LugarType,
     ProductoTiendaType,
     TarifaDeliveryType,
@@ -55,6 +56,7 @@ from store.services.mapbox import (
     fetch_directions,
 )
 from store.services.pricing import calcular_costo_delivery, haversine_metros
+from store.services.google_places import buscar_lugares_google
 
 
 class ProductScopeEnum(Enum):
@@ -224,6 +226,13 @@ class Query(graphene.ObjectType):
         lng=graphene.Float(required=True),
         limit=graphene.Int(default_value=8),
     )
+    lugares_google = graphene.List(
+        LugarBusquedaType,
+        query=graphene.String(),
+        lat=graphene.Float(required=True),
+        lng=graphene.Float(required=True),
+        limit=graphene.Int(default_value=8),
+    )
 
     def resolve_delivery_tarifas(self, info):
         return TarifaDelivery.vigente()
@@ -259,6 +268,18 @@ class Query(graphene.ObjectType):
             matches,
             key=lambda place: (place._distancia_km, place.nombre.casefold()),
         )[:limit]
+
+    def resolve_lugares_google(
+        self,
+        info,
+        query: Optional[str] = None,
+        lat: float = 0,
+        lng: float = 0,
+        limit: int = 8,
+    ):
+        if not (-90 <= lat <= 90 and -180 <= lng <= 180):
+            raise GraphQLError('Las coordenadas de búsqueda no son válidas')
+        return buscar_lugares_google(query, lat, lng, limit)
 
     def resolve_store_product_by_barcode(self, info, codigo):
         user = info.context.user
