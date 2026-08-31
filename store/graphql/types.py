@@ -217,6 +217,7 @@ class StoreOrderReviewType(DjangoObjectType):
 
 class UsuarioType(DjangoObjectType):
     tienda = graphene.Field(TiendaType)
+    avatar = graphene.String()
     foto_identificacion = graphene.String()
     groups = graphene.List(graphene.Int)
     user_permissions = graphene.List(graphene.Int)
@@ -240,6 +241,7 @@ class UsuarioType(DjangoObjectType):
             "genero",
             "telefono",
             "cedula_pasaporte",
+            "avatar",
             "foto_identificacion",
             "ingresos_minimos_mensuales",
             "es_conductor",
@@ -256,6 +258,9 @@ class UsuarioType(DjangoObjectType):
 
     def resolve_foto_identificacion(self, info):
         return _absolute_uri(info, self.foto_identificacion)
+
+    def resolve_avatar(self, info):
+        return _absolute_uri(info, self.avatar)
 
     def resolve_groups(self, info):
         return list(self.groups.values_list("id", flat=True))

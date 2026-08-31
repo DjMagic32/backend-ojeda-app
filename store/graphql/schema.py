@@ -1141,7 +1141,6 @@ SERVICE_TRANSICIONES_VALIDAS = {
     ServiceRequest.ESTADO_PENDIENTE: {ServiceRequest.ESTADO_CANCELADO},
     ServiceRequest.ESTADO_ASIGNADO: {
         ServiceRequest.ESTADO_LLEGO_RECOGIDA,
-        ServiceRequest.ESTADO_EN_CURSO,
         ServiceRequest.ESTADO_CANCELADO,
     },
     ServiceRequest.ESTADO_LLEGO_RECOGIDA: {
