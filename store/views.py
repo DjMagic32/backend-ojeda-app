@@ -990,6 +990,14 @@ class ConversationViewSet(viewsets.ModelViewSet):
     def mark_read(self, request, pk: int | None = None):
         conversation = self.get_object()
         updated = conversation.mensajes.filter(leido=False).exclude(autor=request.user).update(leido=True)
+        # La notificación y el mensaje representan el mismo evento. Al abrir
+        # la conversación ambos deben dejar de contar como no leídos.
+        Notificacion.objects.filter(
+            usuario=request.user,
+            tipo=Notificacion.TIPO_MENSAJE,
+            data__conversation_id=conversation.id,
+            leido=False,
+        ).update(leido=True)
         if updated:
             broadcast_chat_read(conversation.id, request.user.id)
         return Response({'updated': updated})
