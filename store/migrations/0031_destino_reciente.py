@@ -2,6 +2,54 @@ from django.db import migrations, models
 import django.db.models.deletion
 
 
+def poblar_destinos_recientes(apps, schema_editor):
+    DestinoReciente = apps.get_model('store', 'DestinoReciente')
+    ServiceRequest = apps.get_model('store', 'ServiceRequest')
+
+    usados_por_usuario = {}
+    cantidad_por_usuario = {}
+    servicios = ServiceRequest.objects.filter(
+        estado='completed',
+        dropoff_lat__isnull=False,
+        dropoff_lng__isnull=False,
+    ).order_by('cliente_id', '-completado_en', '-id')
+
+    for servicio in servicios:
+        usuario_id = servicio.cliente_id
+        if cantidad_por_usuario.get(usuario_id, 0) >= 3:
+            continue
+
+        coordenadas = (
+            servicio.dropoff_lat,
+            servicio.dropoff_lng,
+        )
+        usados = usados_por_usuario.setdefault(usuario_id, set())
+        if coordenadas in usados:
+            continue
+
+        direccion = (servicio.dropoff_direccion or '').strip()[:255]
+        nombre = (direccion.split(',', 1)[0].strip() or 'Destino en el mapa')[:160]
+        reciente, creado = DestinoReciente.objects.get_or_create(
+            usuario_id=usuario_id,
+            lat=servicio.dropoff_lat,
+            lng=servicio.dropoff_lng,
+            defaults={
+                'nombre': nombre,
+                'direccion': direccion,
+                'veces_usado': 1,
+            },
+        )
+        if not creado:
+            usados.add(coordenadas)
+            continue
+        fecha = servicio.completado_en or servicio.actualizado
+        if fecha:
+            DestinoReciente.objects.filter(pk=reciente.pk).update(ultima_vez=fecha)
+
+        usados.add(coordenadas)
+        cantidad_por_usuario[usuario_id] = cantidad_por_usuario.get(usuario_id, 0) + 1
+
+
 class Migration(migrations.Migration):
     dependencies = [
         ('store', '0030_lugar_ciudad_traki'),
@@ -52,4 +100,5 @@ class Migration(migrations.Migration):
                 ],
             },
         ),
+        migrations.RunPython(poblar_destinos_recientes, migrations.RunPython.noop),
     ]
