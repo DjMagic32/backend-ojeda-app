@@ -40,6 +40,7 @@ from store.models import (
 )
 from .types import (
     DriverProfileType,
+    DestinoRecienteType,
     LugarBusquedaType,
     LugarType,
     ProductoTiendaType,
@@ -233,6 +234,10 @@ class Query(graphene.ObjectType):
         lng=graphene.Float(required=True),
         limit=graphene.Int(default_value=8),
     )
+    destinos_recientes = graphene.List(
+        DestinoRecienteType,
+        limit=graphene.Int(default_value=3),
+    )
 
     def resolve_delivery_tarifas(self, info):
         return TarifaDelivery.vigente()
@@ -280,6 +285,42 @@ class Query(graphene.ObjectType):
         if not (-90 <= lat <= 90 and -180 <= lng <= 180):
             raise GraphQLError('Las coordenadas de búsqueda no son válidas')
         return buscar_lugares_openstreetmap(query, lat, lng, limit)
+
+    def resolve_destinos_recientes(self, info, limit: int = 3):
+        user = info.context.user
+        if not user or not user.is_authenticated:
+            raise GraphQLError('Autenticación requerida')
+
+        limit = max(1, min(limit or 3, 3))
+        servicios = ServiceRequest.objects.filter(
+            cliente=user,
+            estado=ServiceRequest.ESTADO_COMPLETADO,
+            dropoff_lat__isnull=False,
+            dropoff_lng__isnull=False,
+        ).order_by('-completado_en', '-id')
+
+        destinos = []
+        vistos = set()
+        for servicio in servicios.iterator():
+            coordenadas = (servicio.dropoff_lat, servicio.dropoff_lng)
+            if coordenadas in vistos:
+                continue
+
+            direccion = (servicio.dropoff_direccion or '').strip()
+            nombre = direccion.split(',', 1)[0].strip() or 'Destino en el mapa'
+            destinos.append({
+                'id': str(servicio.id),
+                'nombre': nombre,
+                'direccion': direccion,
+                'lat': float(servicio.dropoff_lat),
+                'lng': float(servicio.dropoff_lng),
+                'ultima_vez': servicio.completado_en or servicio.actualizado,
+            })
+            vistos.add(coordenadas)
+            if len(destinos) >= limit:
+                break
+
+        return destinos
 
     def resolve_store_product_by_barcode(self, info, codigo):
         user = info.context.user

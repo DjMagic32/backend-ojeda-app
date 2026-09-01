@@ -492,6 +492,15 @@ class LugarBusquedaType(graphene.ObjectType):
     google_maps_uri = graphene.String()
 
 
+class DestinoRecienteType(graphene.ObjectType):
+    id = graphene.ID(required=True)
+    nombre = graphene.String(required=True)
+    direccion = graphene.String()
+    lat = graphene.Float(required=True)
+    lng = graphene.Float(required=True)
+    ultima_vez = graphene.DateTime()
+
+
 class ServiceRequestType(DjangoObjectType):
     cliente = graphene.Int()
     driver = graphene.Int()
