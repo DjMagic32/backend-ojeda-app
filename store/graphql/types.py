@@ -4,7 +4,6 @@ from graphene_django import DjangoObjectType
 
 from store.models import (
     Conversation,
-    DestinoReciente,
     DriverProfile,
     Lugar,
     OrderPayment,
@@ -491,20 +490,6 @@ class LugarBusquedaType(graphene.ObjectType):
     distancia_km = graphene.Float()
     fuente = graphene.String()
     google_maps_uri = graphene.String()
-
-
-class DestinoRecienteType(DjangoObjectType):
-    class Meta:
-        model = DestinoReciente
-        fields = (
-            'id',
-            'nombre',
-            'direccion',
-            'lat',
-            'lng',
-            'veces_usado',
-            'ultima_vez',
-        )
 
 
 class ServiceRequestType(DjangoObjectType):
