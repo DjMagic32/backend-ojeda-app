@@ -467,6 +467,39 @@ class ServiceRequest(models.Model):
         return f"Servicio #{self.id} ({self.tipo}) - {self.estado}"
 
 
+class DestinoReciente(models.Model):
+    usuario = models.ForeignKey(
+        Usuario,
+        on_delete=models.CASCADE,
+        related_name='destinos_recientes',
+    )
+    nombre = models.CharField(max_length=160)
+    direccion = models.CharField(max_length=255, blank=True, default='')
+    lat = models.DecimalField(max_digits=9, decimal_places=6)
+    lng = models.DecimalField(max_digits=9, decimal_places=6)
+    veces_usado = models.PositiveIntegerField(default=1)
+    ultima_vez = models.DateTimeField(auto_now=True)
+    creado = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-ultima_vez', '-id']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['usuario', 'lat', 'lng'],
+                name='unique_recent_destination_coordinates',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['usuario', '-ultima_vez'],
+                name='store_destino_reciente_user_idx',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.nombre} ({self.usuario_id})'
+
+
 class ServiceRequestCandidate(models.Model):
     ESTADO_POSTULADO = 'applied'
     ESTADO_RECHAZADO = 'rejected'

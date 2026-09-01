@@ -25,6 +25,7 @@ from .models import (
     Usuario,
     Wallet,
     DriverProfile,
+    DestinoReciente,
     Lugar,
     ServiceRequest,
     ArticuloUsado,
@@ -191,6 +192,14 @@ class LugarAdmin(admin.ModelAdmin):
     search_fields = ('nombre', 'alias', 'direccion')
     list_filter = ('categoria', 'activo')
     list_editable = ('activo',)
+
+
+@admin.register(DestinoReciente)
+class DestinoRecienteAdmin(admin.ModelAdmin):
+    list_display = ('usuario', 'nombre', 'direccion', 'veces_usado', 'ultima_vez')
+    search_fields = ('usuario__username', 'usuario__email', 'nombre', 'direccion')
+    list_filter = ('ultima_vez',)
+    readonly_fields = ('creado', 'ultima_vez')
 
 
 @admin.register(Conversation)
