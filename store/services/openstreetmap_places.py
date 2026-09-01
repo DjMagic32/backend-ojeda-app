@@ -195,7 +195,9 @@ def _to_suggestion(
 def _cache_key(query: str | None, lat: float, lng: float, limit: int) -> str:
     raw = f"{(query or '').strip().casefold()}|{lat:.3f}|{lng:.3f}|{limit}"
     digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
-    return f"tuplaza:osm-places:{digest}"
+    # La versión evita reutilizar respuestas vacías generadas por una
+    # configuración anterior del proveedor.
+    return f"tuplaza:osm-places-v2:{digest}"
 
 
 def buscar_lugares_openstreetmap(
@@ -222,7 +224,6 @@ def buscar_lugares_openstreetmap(
                 "lon": lng,
                 "zoom": 14,
                 "location_bias_scale": 0.1,
-                "lang": "es",
                 "countrycode": "VE",
                 "limit": limit * 2,
             },
@@ -240,7 +241,6 @@ def buscar_lugares_openstreetmap(
                         "lon": lng,
                         "radius": 5,
                         "limit": limit,
-                        "lang": "es",
                         "osm_tag": tag,
                     },
                 )
