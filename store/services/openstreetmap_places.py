@@ -137,8 +137,6 @@ def _lugares_catalogo(
         place_lat = float(place.lat)
         place_lng = float(place.lng)
         distance = _haversine_km(reference_lat, reference_lng, place_lat, place_lng)
-        if distance > MAX_SEARCH_DISTANCE_KM:
-            continue
         suggestions.append(
             {
                 "id": f"catalog-{place.id}",
@@ -248,9 +246,12 @@ def buscar_lugares_openstreetmap(
 
     suggestions = catalog_suggestions
     seen = set()
+    max_distance = None if cleaned_query else MAX_SEARCH_DISTANCE_KM
     for feature in features:
         suggestion = _to_suggestion(feature, lat, lng)
-        if not suggestion or suggestion["distancia_km"] > MAX_SEARCH_DISTANCE_KM:
+        if not suggestion:
+            continue
+        if max_distance is not None and suggestion["distancia_km"] > max_distance:
             continue
         if suggestion["id"] in seen:
             continue
