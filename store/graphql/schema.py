@@ -56,7 +56,7 @@ from store.services.mapbox import (
     fetch_directions,
 )
 from store.services.pricing import calcular_costo_delivery, haversine_metros
-from store.services.google_places import buscar_lugares_google
+from store.services.openstreetmap_places import buscar_lugares_openstreetmap
 
 
 class ProductScopeEnum(Enum):
@@ -226,7 +226,7 @@ class Query(graphene.ObjectType):
         lng=graphene.Float(required=True),
         limit=graphene.Int(default_value=8),
     )
-    lugares_google = graphene.List(
+    lugares_openstreetmap = graphene.List(
         LugarBusquedaType,
         query=graphene.String(),
         lat=graphene.Float(required=True),
@@ -269,7 +269,7 @@ class Query(graphene.ObjectType):
             key=lambda place: (place._distancia_km, place.nombre.casefold()),
         )[:limit]
 
-    def resolve_lugares_google(
+    def resolve_lugares_openstreetmap(
         self,
         info,
         query: Optional[str] = None,
@@ -279,7 +279,7 @@ class Query(graphene.ObjectType):
     ):
         if not (-90 <= lat <= 90 and -180 <= lng <= 180):
             raise GraphQLError('Las coordenadas de búsqueda no son válidas')
-        return buscar_lugares_google(query, lat, lng, limit)
+        return buscar_lugares_openstreetmap(query, lat, lng, limit)
 
     def resolve_store_product_by_barcode(self, info, codigo):
         user = info.context.user

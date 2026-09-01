@@ -76,7 +76,7 @@ if railway_public_domain:
 
 MAPBOX_ACCESS_TOKEN = config('MAPBOX_TOKEN', default=None)
 GOOGLE_WEB_CLIENT_ID = config('GOOGLE_WEB_CLIENT_ID', default='')
-GOOGLE_PLACES_API_KEY = config('GOOGLE_PLACES_API_KEY', default='').strip()
+PHOTON_API_URL = config('PHOTON_API_URL', default='https://photon.komoot.io').strip()
 
 
 # Application definition
