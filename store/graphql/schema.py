@@ -1152,6 +1152,25 @@ class CreateServiceRequest(graphene.Mutation):
 
         servicio.save()
 
+        # La pantalla del conductor se sincroniza a partir del socket personal
+        # de notificaciones. Avisamos únicamente a quienes están disponibles
+        # para que una nueva solicitud aparezca sin recargar manualmente.
+        conductores_disponibles = DriverProfile.objects.filter(
+            estado=DriverProfile.ESTADO_DISPONIBLE,
+            usuario__is_active=True,
+        ).exclude(usuario_id=user.id)
+        servicio_label = (
+            'delivery' if tipo_value == ServiceRequest.TIPO_DELIVERY else 'servicio de taxi'
+        )
+        for perfil in conductores_disponibles:
+            Notificacion.objects.create(
+                usuario_id=perfil.usuario_id,
+                titulo=f'Nueva solicitud de {servicio_label}',
+                mensaje='Hay una solicitud disponible. Revisa la recogida y postúlate si te conviene.',
+                tipo=Notificacion.TIPO_SERVICIO,
+                data={'service_id': servicio.id, 'evento': 'nueva_solicitud'},
+            )
+
         if store_order and store_order.usuario_id != user.id:
             Notificacion.objects.create(
                 usuario=store_order.usuario,
