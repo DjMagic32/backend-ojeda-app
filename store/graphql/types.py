@@ -504,6 +504,7 @@ class DestinoRecienteType(graphene.ObjectType):
 class ServiceRequestType(DjangoObjectType):
     cliente = graphene.Int()
     driver = graphene.Int()
+    mi_candidatura_estado = graphene.String()
     store_order = graphene.Field(StoreOrderType)
     ruta_geojson = graphene.JSONString()
     cliente_detalle = graphene.Field(UsuarioType)
@@ -544,6 +545,12 @@ class ServiceRequestType(DjangoObjectType):
 
     def resolve_driver(self, info):
         return self.driver_id if self.driver_id else None
+
+    def resolve_mi_candidatura_estado(self, info):
+        user = info.context.user
+        if not user or not user.is_authenticated or not getattr(user, 'es_conductor', False):
+            return None
+        return self.candidates.filter(driver=user).values_list('estado', flat=True).first()
 
     def resolve_store_order(self, info):
         return self.store_order

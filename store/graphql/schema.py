@@ -500,10 +500,21 @@ class Query(graphene.ObjectType):
 
             driver_qs = base_queryset.filter(driver=user)
             if incluir_pendientes_sin_driver:
-                driver_qs = driver_qs | base_queryset.filter(
+                pendientes_disponibles = base_queryset.filter(
                     driver__isnull=True,
                     estado=ServiceRequest.ESTADO_PENDIENTE,
-                ).exclude(cliente=user).exclude(candidates__driver=user)
+                ).exclude(cliente=user).exclude(
+                    candidates__driver=user,
+                )
+                pendientes_postulados = base_queryset.filter(
+                    driver__isnull=True,
+                    estado=ServiceRequest.ESTADO_PENDIENTE,
+                    candidates__driver=user,
+                    candidates__estado=ServiceRequestCandidate.ESTADO_POSTULADO,
+                ).exclude(cliente=user)
+                driver_qs = (
+                    driver_qs | pendientes_disponibles | pendientes_postulados
+                )
             return list(driver_qs.distinct())
 
         return list(base_queryset.filter(cliente=user))
@@ -540,6 +551,11 @@ class Query(graphene.ObjectType):
             servicio.cliente_id != user.id
             and servicio.driver_id != user.id
             and not es_comprador_orden
+            and not ServiceRequestCandidate.objects.filter(
+                service_request=servicio,
+                driver=user,
+                estado=ServiceRequestCandidate.ESTADO_POSTULADO,
+            ).exists()
         ):
             raise GraphQLError("No tienes permiso para ver esta solicitud")
 
@@ -1274,6 +1290,8 @@ SERVICE_ESTADOS_SOLO_CONDUCTOR = {
 def _notificar_transicion_servicio(servicio: ServiceRequest, estado_value: str):
     receptor = servicio.receptor_codigo
     destinatarios = {servicio.cliente_id, receptor.id}
+    if servicio.driver_id:
+        destinatarios.add(servicio.driver_id)
     es_taxi = servicio.tipo == ServiceRequest.TIPO_TAXI
 
     mensajes = {
