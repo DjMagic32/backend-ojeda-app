@@ -20,9 +20,8 @@ def poblar_destinos_recientes(apps, schema_editor):
             continue
 
         coordenadas = (
-            usuario_id,
-            str(servicio.dropoff_lat),
-            str(servicio.dropoff_lng),
+            servicio.dropoff_lat,
+            servicio.dropoff_lng,
         )
         usados = usados_por_usuario.setdefault(usuario_id, set())
         if coordenadas in usados:
@@ -30,14 +29,19 @@ def poblar_destinos_recientes(apps, schema_editor):
 
         direccion = (servicio.dropoff_direccion or '').strip()[:255]
         nombre = (direccion.split(',', 1)[0].strip() or 'Destino en el mapa')[:160]
-        reciente = DestinoReciente.objects.create(
+        reciente, creado = DestinoReciente.objects.get_or_create(
             usuario_id=usuario_id,
-            nombre=nombre,
-            direccion=direccion,
             lat=servicio.dropoff_lat,
             lng=servicio.dropoff_lng,
-            veces_usado=1,
+            defaults={
+                'nombre': nombre,
+                'direccion': direccion,
+                'veces_usado': 1,
+            },
         )
+        if not creado:
+            usados.add(coordenadas)
+            continue
         fecha = servicio.completado_en or servicio.actualizado
         if fecha:
             DestinoReciente.objects.filter(pk=reciente.pk).update(ultima_vez=fecha)
