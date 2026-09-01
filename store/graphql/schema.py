@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 from store.models import (
     Carrito,
     Conversation,
+    DestinoReciente,
     DriverProfile,
     Lugar,
     Notificacion,
@@ -40,6 +41,7 @@ from store.models import (
 )
 from .types import (
     DriverProfileType,
+    DestinoRecienteType,
     LugarBusquedaType,
     LugarType,
     ProductoTiendaType,
@@ -233,6 +235,10 @@ class Query(graphene.ObjectType):
         lng=graphene.Float(required=True),
         limit=graphene.Int(default_value=8),
     )
+    destinos_recientes = graphene.List(
+        DestinoRecienteType,
+        limit=graphene.Int(default_value=3),
+    )
 
     def resolve_delivery_tarifas(self, info):
         return TarifaDelivery.vigente()
@@ -280,6 +286,13 @@ class Query(graphene.ObjectType):
         if not (-90 <= lat <= 90 and -180 <= lng <= 180):
             raise GraphQLError('Las coordenadas de búsqueda no son válidas')
         return buscar_lugares_openstreetmap(query, lat, lng, limit)
+
+    def resolve_destinos_recientes(self, info, limit: int = 3):
+        user = info.context.user
+        if not user or not user.is_authenticated:
+            raise GraphQLError('Autenticación requerida')
+        limit = max(1, min(limit or 3, 3))
+        return DestinoReciente.objects.filter(usuario=user)[:limit]
 
     def resolve_store_product_by_barcode(self, info, codigo):
         user = info.context.user
@@ -1230,6 +1243,46 @@ SERVICE_ESTADOS_SOLO_CONDUCTOR = {
 }
 
 
+def _registrar_destino_reciente(servicio: ServiceRequest):
+    """Guarda el destino de un viaje completado y conserva solo los 3 últimos."""
+    if servicio.dropoff_lat is None or servicio.dropoff_lng is None:
+        return
+
+    direccion = (servicio.dropoff_direccion or '').strip()[:255]
+    nombre = (direccion.split(',', 1)[0].strip() or 'Destino en el mapa')[:160]
+
+    reciente, created = DestinoReciente.objects.select_for_update().get_or_create(
+        usuario_id=servicio.cliente_id,
+        lat=servicio.dropoff_lat,
+        lng=servicio.dropoff_lng,
+        defaults={
+            'nombre': nombre,
+            'direccion': direccion,
+            'veces_usado': 1,
+        },
+    )
+    if not created:
+        reciente.nombre = nombre
+        reciente.direccion = direccion
+        reciente.veces_usado += 1
+        reciente.save(
+            update_fields=[
+                'nombre',
+                'direccion',
+                'veces_usado',
+                'ultima_vez',
+            ]
+        )
+
+    antiguos = list(
+        DestinoReciente.objects.filter(usuario_id=servicio.cliente_id)
+        .order_by('-ultima_vez', '-id')
+        .values_list('id', flat=True)[3:]
+    )
+    if antiguos:
+        DestinoReciente.objects.filter(id__in=antiguos).delete()
+
+
 def _notificar_transicion_servicio(servicio: ServiceRequest, estado_value: str):
     receptor = servicio.receptor_codigo
     destinatarios = {servicio.cliente_id, receptor.id}
@@ -1343,6 +1396,9 @@ class UpdateServiceRequestStatus(graphene.Mutation):
                     "actualizado",
                 ]
             )
+
+            if estado_value == ServiceRequest.ESTADO_COMPLETADO:
+                _registrar_destino_reciente(servicio)
 
             order = servicio.store_order
             if (
