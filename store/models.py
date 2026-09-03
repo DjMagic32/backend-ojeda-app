@@ -204,8 +204,37 @@ class Tienda(models.Model):
     def pago_movil_configurado(self) -> bool:
         return bool(self.pago_movil_banco and self.pago_movil_telefono and self.pago_movil_cedula)
 
+    def save(self, *args, **kwargs):
+        nombre_anterior = None
+        if self.pk:
+            nombre_anterior = type(self).objects.filter(pk=self.pk).values_list(
+                'nombre', flat=True
+            ).first()
+        super().save(*args, **kwargs)
+        if nombre_anterior != self.nombre:
+            TiendaNombreHistorial.objects.create(tienda=self, nombre=self.nombre)
+
     def __str__(self):
         return self.nombre
+
+
+class TiendaNombreHistorial(models.Model):
+    tienda = models.ForeignKey(
+        Tienda,
+        on_delete=models.CASCADE,
+        related_name='historial_nombres',
+    )
+    nombre = models.CharField(max_length=200)
+    creado = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-creado']
+        indexes = [
+            models.Index(fields=['tienda', '-creado'], name='store_tienda_nombre_hist_idx'),
+        ]
+
+    def __str__(self):
+        return f'{self.tienda_id}: {self.nombre}'
 
 MONEDA_USD = 'USD'
 MONEDA_VES = 'VES'
@@ -529,6 +558,15 @@ class StoreOrderReview(models.Model):
     rating = models.PositiveSmallIntegerField(
         validators=[MinValueValidator(1), MaxValueValidator(5)],
     )
+    ETIQUETAS_VALIDAS = [
+        'Pago puntual',
+        'Pago rápido',
+        'Confianza',
+        'Buena atención',
+        'Entrega rápida',
+        'Producto como se describe',
+    ]
+    etiquetas = models.JSONField(default=list, blank=True)
     comentario = models.TextField(blank=True, null=True)
     creado = models.DateTimeField(auto_now_add=True)
     actualizado = models.DateTimeField(auto_now=True)

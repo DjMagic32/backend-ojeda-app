@@ -15,6 +15,7 @@ from store.models import (
     StoreOrderReview,
     StoreOrderSellerReview,
     Tienda,
+    TiendaNombreHistorial,
     Usuario,
     Categoria,
 )
@@ -189,6 +190,7 @@ class StoreOrderReviewType(DjangoObjectType):
     usuario = graphene.Int()
     usuario_detalle = graphene.Field(lambda: UsuarioType)
     producto = graphene.Field(lambda: ProductoTiendaType)
+    etiquetas = graphene.List(graphene.String)
 
     class Meta:
         model = StoreOrderReview
@@ -198,6 +200,7 @@ class StoreOrderReviewType(DjangoObjectType):
             'producto',
             'usuario',
             'rating',
+            'etiquetas',
             'comentario',
             'creado',
             'actualizado',
@@ -214,6 +217,31 @@ class StoreOrderReviewType(DjangoObjectType):
 
     def resolve_producto(self, info):
         return self.producto
+
+    def resolve_etiquetas(self, info):
+        return self.etiquetas or []
+
+
+class TiendaNombreHistorialType(DjangoObjectType):
+    tienda = graphene.Int()
+
+    class Meta:
+        model = TiendaNombreHistorial
+        fields = ('id', 'tienda', 'nombre', 'creado')
+
+    def resolve_tienda(self, info):
+        return self.tienda_id
+
+
+class TiendaReputacionType(graphene.ObjectType):
+    tienda = graphene.Field(TiendaType)
+    total_ventas = graphene.Int()
+    total_resenas = graphene.Int()
+    promedio_calificacion = graphene.Float()
+    fecha_registro = graphene.DateTime()
+    comentarios_positivos = graphene.List(lambda: StoreOrderReviewType)
+    comentarios_negativos = graphene.List(lambda: StoreOrderReviewType)
+    historial_nombres = graphene.List(TiendaNombreHistorialType)
 
 
 class UsuarioType(DjangoObjectType):

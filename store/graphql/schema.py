@@ -12,7 +12,7 @@ from django.contrib.auth import authenticate
 from django.contrib.auth.password_validation import validate_password
 from store.services.mail import send_app_email
 from django.db import transaction
-from django.db.models import Q, QuerySet, Sum
+from django.db.models import Avg, Q, QuerySet, Sum
 from django.utils import timezone
 from django.utils.crypto import get_random_string
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -36,6 +36,7 @@ from store.models import (
     TarifaDelivery,
     TasaCambio,
     Tienda,
+    TiendaNombreHistorial,
     Usuario,
 )
 from .types import (
@@ -49,6 +50,7 @@ from .types import (
     StoreOrderReviewType,
     StoreOrderSellerReviewType,
     StoreOrderType,
+    TiendaReputacionType,
     UsuarioType,
 )
 from store.services.mapbox import (
@@ -180,6 +182,30 @@ def _normalize_service_status_list(
     return normalized_values
 
 
+def _normalizar_etiquetas_resena(etiquetas: Optional[Iterable[str]]) -> list[str]:
+    if not etiquetas:
+        return []
+
+    permitidas = {
+        etiqueta.casefold(): etiqueta
+        for etiqueta in StoreOrderReview.ETIQUETAS_VALIDAS
+    }
+    resultado = []
+    for etiqueta in etiquetas:
+        clave = str(etiqueta or '').strip().casefold()
+        if not clave:
+            continue
+        if clave not in permitidas:
+            raise GraphQLError(f'Etiqueta de reseña no válida: {etiqueta}')
+        canonica = permitidas[clave]
+        if canonica not in resultado:
+            resultado.append(canonica)
+
+    if len(resultado) > 5:
+        raise GraphQLError('Puedes seleccionar hasta 5 etiquetas')
+    return resultado
+
+
 class Query(graphene.ObjectType):
     me = graphene.Field(UsuarioType)
     store_products = graphene.List(
@@ -198,6 +224,10 @@ class Query(graphene.ObjectType):
     store_product = graphene.Field(
         ProductoTiendaType,
         id=graphene.ID(required=True),
+    )
+    tienda_reputacion = graphene.Field(
+        TiendaReputacionType,
+        tienda_id=graphene.ID(required=True),
     )
     store_orders = graphene.List(
         StoreOrderType,
@@ -336,6 +366,40 @@ class Query(graphene.ObjectType):
             .filter(tienda__usuario=user, codigo_barras=codigo)
             .first()
         )
+
+    def resolve_tienda_reputacion(self, info, tienda_id: int):
+        try:
+            tienda = Tienda.objects.get(pk=tienda_id)
+        except Tienda.DoesNotExist as exc:
+            raise GraphQLError('Tienda no encontrada') from exc
+
+        reviews = list(
+            StoreOrderReview.objects.filter(
+                producto__tienda=tienda,
+            )
+            .select_related('usuario', 'producto')
+            .order_by('-creado')
+        )
+        aggregate = StoreOrderReview.objects.filter(
+            producto__tienda=tienda,
+        ).aggregate(avg=Avg('rating'))
+        promedio = aggregate.get('avg')
+        historial = list(
+            TiendaNombreHistorial.objects.filter(tienda=tienda).order_by('-creado')
+        )
+        return {
+            'tienda': tienda,
+            'total_ventas': StoreOrder.objects.filter(
+                producto__tienda=tienda,
+                estado=StoreOrder.ESTADO_COMPLETADO,
+            ).count(),
+            'total_resenas': len(reviews),
+            'promedio_calificacion': float(promedio) if promedio is not None else None,
+            'fecha_registro': tienda.creado,
+            'comentarios_positivos': [review for review in reviews if review.rating >= 4],
+            'comentarios_negativos': [review for review in reviews if review.rating <= 2],
+            'historial_nombres': historial,
+        }
 
     def resolve_me(self, info):
         user = info.context.user
@@ -799,11 +863,19 @@ class CreateStoreOrderReview(graphene.Mutation):
         order_id = graphene.ID(required=True)
         rating = graphene.Int(required=True)
         comentario = graphene.String(required=False)
+        etiquetas = graphene.List(graphene.String, required=False)
 
     review = graphene.Field(StoreOrderReviewType)
 
     @staticmethod
-    def mutate(root, info, order_id: int, rating: int, comentario: Optional[str] = None):
+    def mutate(
+        root,
+        info,
+        order_id: int,
+        rating: int,
+        comentario: Optional[str] = None,
+        etiquetas: Optional[Iterable[str]] = None,
+    ):
         user = info.context.user
         if not user or not user.is_authenticated:
             raise GraphQLError("Autenticación requerida")
@@ -825,11 +897,14 @@ class CreateStoreOrderReview(graphene.Mutation):
         if hasattr(order, "review"):
             raise GraphQLError("Ya enviaste una reseña para esta orden")
 
+        etiquetas_normalizadas = _normalizar_etiquetas_resena(etiquetas)
+
         review = StoreOrderReview.objects.create(
             order=order,
             producto=order.producto,
             usuario=user,
             rating=rating,
+            etiquetas=etiquetas_normalizadas,
             comentario=comentario,
         )
 
