@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework import viewsets, status, permissions, generics
@@ -902,6 +904,7 @@ class ConversationViewSet(viewsets.ModelViewSet):
     serializer_class = ConversationSerializer
     permission_classes = [IsAuthenticated]
     http_method_names = ['get', 'post', 'delete', 'head', 'options']
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
     queryset = Conversation.objects.all()
 
     def get_queryset(self):
@@ -952,13 +955,43 @@ class ConversationViewSet(viewsets.ModelViewSet):
             return Response(serializer.data)
 
         contenido = (request.data.get('contenido') or '').strip()
-        if not contenido:
-            return Response({'error': 'El mensaje no puede estar vacío.'}, status=status.HTTP_400_BAD_REQUEST)
+        adjunto = request.FILES.get('adjunto')
+        if not contenido and not adjunto:
+            return Response(
+                {'error': 'El mensaje debe incluir texto o un archivo adjunto.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if adjunto:
+            max_size = 10 * 1024 * 1024
+            if adjunto.size > max_size:
+                return Response(
+                    {'error': 'El archivo no puede superar los 10 MB.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            nombre = str(getattr(adjunto, 'name', '') or '')
+            extension = Path(nombre).suffix.lower()
+            tipo = str(getattr(adjunto, 'content_type', '') or '').lower()
+            extensiones_permitidas = {
+                '.jpg', '.jpeg', '.png', '.webp', '.gif', '.heic', '.heif', '.pdf',
+            }
+            archivo_permitido = (
+                extension in extensiones_permitidas
+                and (tipo.startswith('image/') or tipo == 'application/pdf' or not tipo)
+            )
+            if not archivo_permitido:
+                return Response(
+                    {'error': 'Solo puedes adjuntar imágenes o archivos PDF.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         mensaje = Message.objects.create(
             conversation=conversation,
             autor=request.user,
             contenido=contenido,
+            adjunto=adjunto,
+            adjunto_nombre=(str(getattr(adjunto, 'name', '') or '')[:255] if adjunto else ''),
+            adjunto_tipo=(str(getattr(adjunto, 'content_type', '') or '')[:100] if adjunto else ''),
         )
         conversation.save(update_fields=['actualizado'])
 
@@ -968,11 +1001,12 @@ class ConversationViewSet(viewsets.ModelViewSet):
         # Notificar al otro participante (in-app + push)
         otros = conversation.participantes.exclude(id=request.user.id)
         autor_nombre = request.user.first_name or request.user.email
+        resumen = contenido[:140] if contenido else f"📎 Adjunto: {mensaje.adjunto_nombre}"
         for destinatario in otros:
             Notificacion.objects.create(
                 usuario=destinatario,
                 titulo=f'Nuevo mensaje de {autor_nombre}',
-                mensaje=contenido[:140],
+                mensaje=resumen,
                 tipo=Notificacion.TIPO_MENSAJE,
                 data={'conversation_id': conversation.id},
                 leido=False,
@@ -980,7 +1014,7 @@ class ConversationViewSet(viewsets.ModelViewSet):
             send_push_to_user(
                 destinatario.id,
                 title=f'Nuevo mensaje de {autor_nombre}',
-                body=contenido[:140],
+                body=resumen,
                 data={'type': 'chat', 'conversation_id': conversation.id},
             )
 

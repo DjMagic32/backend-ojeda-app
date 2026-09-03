@@ -344,8 +344,28 @@ class MessageSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Message
-        fields = ['id', 'conversation', 'autor', 'contenido', 'leido', 'creado', 'es_mio']
-        read_only_fields = ['id', 'autor', 'leido', 'creado', 'es_mio']
+        fields = [
+            'id',
+            'conversation',
+            'autor',
+            'contenido',
+            'adjunto',
+            'adjunto_nombre',
+            'adjunto_tipo',
+            'leido',
+            'creado',
+            'es_mio',
+        ]
+        read_only_fields = [
+            'id',
+            'autor',
+            'adjunto',
+            'adjunto_nombre',
+            'adjunto_tipo',
+            'leido',
+            'creado',
+            'es_mio',
+        ]
 
     def get_es_mio(self, obj: Message) -> bool:
         request = self.context.get('request')

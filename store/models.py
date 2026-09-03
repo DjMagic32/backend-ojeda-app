@@ -770,6 +770,13 @@ class Message(models.Model):
         related_name='mensajes_enviados',
     )
     contenido = models.TextField()
+    adjunto = models.FileField(
+        upload_to='chat_adjuntos/',
+        blank=True,
+        null=True,
+    )
+    adjunto_nombre = models.CharField(max_length=255, blank=True, default='')
+    adjunto_tipo = models.CharField(max_length=100, blank=True, default='')
     leido = models.BooleanField(default=False)
     creado = models.DateTimeField(auto_now_add=True)
 
