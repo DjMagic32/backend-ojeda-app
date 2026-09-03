@@ -1403,7 +1403,7 @@ class UpdateServiceRequestStatus(graphene.Mutation):
         if estado_value == ServiceRequest.ESTADO_EN_CURSO:
             if not codigo_entrega or codigo_entrega.strip() != servicio.codigo_entrega:
                 raise GraphQLError(
-                    "Código inválido. Verifica el vehículo y pide el código al usuario antes de iniciar."
+                    "Código inválido. Pide al cliente verificar la placa de tu vehículo y entregarte el código antes de iniciar."
                 )
 
         servicio.estado = estado_value
