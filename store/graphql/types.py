@@ -565,10 +565,10 @@ class ServiceRequestType(DjangoObjectType):
         return self.driver
 
     def resolve_codigo_entrega(self, info):
-        # Solo quien recibe (comprador o solicitante directo) ve el código;
-        # ni la tienda solicitante ni el conductor pueden leerlo.
+        # Solo quien solicita el servicio ve el código de recogida;
+        # el conductor lo valida, pero nunca puede leerlo desde la API.
         user = info.context.user
-        if user and user.is_authenticated and user.id == self.receptor_codigo.id:
+        if user and user.is_authenticated and user.id == self.usuario_codigo_recogida.id:
             return self.codigo_entrega
         return None
 

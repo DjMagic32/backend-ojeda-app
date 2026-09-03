@@ -1307,7 +1307,7 @@ SERVICE_ESTADOS_SOLO_CONDUCTOR = {
 
 
 def _notificar_transicion_servicio(servicio: ServiceRequest, estado_value: str):
-    receptor = servicio.receptor_codigo
+    receptor = servicio.usuario_receptor
     destinatarios = {servicio.cliente_id, receptor.id}
     if servicio.driver_id:
         destinatarios.add(servicio.driver_id)

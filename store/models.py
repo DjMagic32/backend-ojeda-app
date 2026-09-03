@@ -433,9 +433,17 @@ class ServiceRequest(models.Model):
         ordering = ['-creado']
 
     @property
-    def receptor_codigo(self) -> Usuario:
-        """Quien posee el código de entrega: el comprador de la orden asociada
-        (la tienda solicitante nunca lo ve) o, si no hay orden, el solicitante."""
+    def usuario_codigo_recogida(self) -> Usuario:
+        """Quien solicita el servicio y valida la placa al recoger.
+
+        El código actual confirma la recogida: lo posee quien creó la solicitud.
+        En una orden de tienda, por tanto, lo posee la tienda y no el comprador.
+        """
+        return self.cliente
+
+    @property
+    def usuario_receptor(self) -> Usuario:
+        """Usuario que recibe el servicio o el pedido en el destino."""
         if self.store_order and self.store_order.usuario_id != self.cliente_id:
             return self.store_order.usuario
         return self.cliente
