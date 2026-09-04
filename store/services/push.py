@@ -31,6 +31,7 @@ def _build_messages(tokens: Iterable[str], title: str, body: str, data: dict[str
             'body': body,
             'sound': 'default',
             'priority': 'high',
+            'channelId': 'default',
         }
         if data is not None:
             message['data'] = data
