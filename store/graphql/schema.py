@@ -1827,10 +1827,6 @@ class ResetPassword(graphene.Mutation):
         codigo = (codigo or "").strip()
         if len(new_password or "") < 8:
             raise GraphQLError("La contraseña debe tener al menos 8 caracteres")
-        try:
-            validate_password(new_password, user)
-        except Exception as exc:
-            raise GraphQLError(str(exc)) from exc
 
         user = Usuario.objects.filter(email=email, is_active=True).first()
         reset_code = (
@@ -1845,6 +1841,11 @@ class ResetPassword(graphene.Mutation):
             reset_code.intentos += 1
             reset_code.save(update_fields=["intentos"])
             raise GraphQLError("Código incorrecto.")
+
+        try:
+            validate_password(new_password, user)
+        except Exception as exc:
+            raise GraphQLError(str(exc)) from exc
 
         user.set_password(new_password)
         user.save(update_fields=["password"])
