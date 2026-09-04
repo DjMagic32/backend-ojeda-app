@@ -95,6 +95,7 @@ class TarifaDeliveryType(graphene.ObjectType):
 
 class CategoriaType(DjangoObjectType):
     thumbnail = graphene.String()
+    es_comida = graphene.Boolean()
 
     class Meta:
         model = Categoria
@@ -103,6 +104,7 @@ class CategoriaType(DjangoObjectType):
             "nombre",
             "descripcion",
             "tipo",
+            "es_comida",
             "thumbnail",
         )
 

@@ -694,6 +694,11 @@ class Categoria(models.Model):
     nombre = models.CharField(max_length=100)
     descripcion = models.TextField(blank=True, null=True)
     tipo = models.CharField(max_length=15, choices=TIPOS, default=TIPO_PRODUCTO)
+    es_comida = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text='Indica si la categoría se muestra en la sección Comidas.',
+    )
     thumbnail = models.ImageField(upload_to='categorias/', blank=True, null=True)
 
     def __str__(self):

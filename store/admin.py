@@ -66,8 +66,9 @@ class ItemCarritoAdmin(admin.ModelAdmin):
 
 @admin.register(Categoria)
 class CategoriaAdmin(admin.ModelAdmin):
-    list_display = ('nombre', 'descripcion')
+    list_display = ('nombre', 'tipo', 'es_comida', 'descripcion')
     search_fields = ('nombre',)
+    list_filter = ('tipo', 'es_comida')
 
 @admin.register(Producto)
 class ProductoAdmin(admin.ModelAdmin):

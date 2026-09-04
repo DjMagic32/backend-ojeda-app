@@ -69,6 +69,22 @@ class ProductoTiendaSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ['tienda']
 
+    def validate(self, attrs):
+        # Los productos nuevos deben quedar clasificados para que puedan
+        # aparecer correctamente en el catálogo general y en Comidas.
+        if self.instance is None and attrs.get('categoria') is None:
+            raise serializers.ValidationError({
+                'categoria': 'Debes seleccionar una categoría.',
+            })
+
+        categoria = attrs.get('categoria')
+        tipo = attrs.get('tipo')
+        if categoria is not None and tipo is not None and categoria.tipo != tipo:
+            raise serializers.ValidationError({
+                'categoria': 'La categoría no corresponde al tipo publicado.',
+            })
+        return attrs
+
     def validate_codigo_barras(self, value):
         value = (value or '').strip() or None
         if value is None:

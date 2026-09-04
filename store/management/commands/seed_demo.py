@@ -152,8 +152,12 @@ class Command(BaseCommand):
             defaults={
                 'descripcion': 'Categoría demo para productos de comida.',
                 'tipo': Categoria.TIPO_PRODUCTO,
+                'es_comida': True,
             },
         )
+        if not cat.es_comida:
+            cat.es_comida = True
+            cat.save(update_fields=['es_comida'])
         return cat
 
     def _ensure_tienda(self, usuario: Usuario) -> Tienda:
