@@ -1223,6 +1223,13 @@ class ReporteCreateView(generics.CreateAPIView):
 
 
 class ArticuloUsadoViewSet(viewsets.ModelViewSet):
+    """Publicaciones de artículos de la comunidad.
+
+    Este flujo es independiente de Tienda: cualquier usuario autenticado
+    puede publicar y administrar sus propios artículos. La consulta pública
+    solo expone publicaciones activas.
+    """
+
     serializer_class = ArticuloUsadoSerializer
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
@@ -1256,3 +1263,9 @@ class ArticuloUsadoViewSet(viewsets.ModelViewSet):
                 from rest_framework.exceptions import PermissionDenied
                 raise PermissionDenied('Solo el vendedor puede modificar este artículo.')
         return obj
+
+    def perform_create(self, serializer):
+        # Una publicación nueva siempre debe aparecer en el catálogo público.
+        # ``activo`` se mantiene editable en actualizaciones para que el
+        # vendedor pueda retirarla posteriormente desde su gestión.
+        serializer.save(vendedor=self.request.user, activo=True)
