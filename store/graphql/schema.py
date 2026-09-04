@@ -581,7 +581,14 @@ class Query(graphene.ObjectType):
                 )
             return list(driver_qs.distinct())
 
-        return list(base_queryset.filter(cliente=user))
+        # El comprador también es participante de un delivery que la tienda
+        # solicitó para su orden. Así puede verlo desde "Mis pedidos" y abrir
+        # el seguimiento aunque no haya creado personalmente el servicio.
+        return list(
+            base_queryset.filter(
+                Q(cliente=user) | Q(store_order__usuario=user)
+            ).distinct()
+        )
 
     def resolve_my_driver_profile(self, info):
         user = info.context.user
@@ -1125,6 +1132,10 @@ class CreateServiceRequest(graphene.Mutation):
         dropoff_lat = graphene.Float(required=False)
         dropoff_lng = graphene.Float(required=False)
         notas = graphene.String(required=False)
+        pago_delivery = graphene.String(
+            required=False,
+            description="destination para pago en destino o store si lo paga la tienda.",
+        )
         costo_estimado = graphene.Float(
             required=False,
             description="Obsoleto: el costo lo calcula el servidor según la tarifa vigente.",
@@ -1145,6 +1156,7 @@ class CreateServiceRequest(graphene.Mutation):
         dropoff_lat: Optional[float] = None,
         dropoff_lng: Optional[float] = None,
         notas: Optional[str] = None,
+        pago_delivery: Optional[str] = None,
         costo_estimado: Optional[float] = None,
     ):
         user = info.context.user
@@ -1169,6 +1181,33 @@ class CreateServiceRequest(graphene.Mutation):
             ).exists():
                 raise GraphQLError("Esta orden ya tiene un delivery en curso")
 
+        pago_delivery_value = (
+            str(pago_delivery).strip().lower()
+            if pago_delivery is not None
+            else None
+        )
+        pagos_validos = {
+            ServiceRequest.PAGO_DESTINO,
+            ServiceRequest.PAGO_TIENDA,
+        }
+        if pago_delivery_value not in pagos_validos:
+            if store_order and store_order.producto.tienda.usuario_id == user.id:
+                raise GraphQLError(
+                    "Selecciona si el delivery se paga en destino o lo paga la tienda"
+                )
+            pago_delivery_value = ServiceRequest.PAGO_DESTINO
+
+        es_tienda_solicitante = bool(
+            store_order and store_order.producto.tienda.usuario_id == user.id
+        )
+        if pago_delivery_value == ServiceRequest.PAGO_TIENDA and not es_tienda_solicitante:
+            raise GraphQLError("Solo la tienda puede asumir el pago del delivery")
+
+        # Los servicios independientes y los taxis mantienen el comportamiento
+        # habitual: el pago se entiende como pago en destino.
+        if tipo_value != ServiceRequest.TIPO_DELIVERY:
+            pago_delivery_value = ServiceRequest.PAGO_DESTINO
+
         servicio = ServiceRequest(
             tipo=tipo_value,
             cliente=user,
@@ -1176,6 +1215,7 @@ class CreateServiceRequest(graphene.Mutation):
             pickup_direccion=pickup_direccion,
             dropoff_direccion=dropoff_direccion,
             notas=notas,
+            pago_delivery=pago_delivery_value,
         )
 
         if pickup_lat is not None:
@@ -1247,12 +1287,17 @@ class CreateServiceRequest(graphene.Mutation):
             )
 
         if store_order and store_order.usuario_id != user.id:
+            pago_label = (
+                "pago en destino"
+                if servicio.pago_delivery == ServiceRequest.PAGO_DESTINO
+                else "pago asumido por la tienda"
+            )
             Notificacion.objects.create(
                 usuario=store_order.usuario,
                 titulo="Delivery solicitado",
                 mensaje=(
                     f"La tienda solicitó un delivery para tu orden #{store_order.id}. "
-                    "Podrás seguirlo desde tu orden."
+                    f"El envío tiene {pago_label}. Podrás seguirlo desde tu orden."
                 ),
                 tipo=Notificacion.TIPO_SERVICIO,
                 data={"service_id": servicio.id},

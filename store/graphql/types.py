@@ -561,6 +561,7 @@ class ServiceRequestType(DjangoObjectType):
             "distancia_metros",
             "duracion_segundos",
             "costo_estimado",
+            "pago_delivery",
             "ruta_geojson",
             "notas",
             "asignado_en",

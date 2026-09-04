@@ -397,6 +397,13 @@ class ServiceRequest(models.Model):
         (TIPO_DELIVERY, 'Delivery'),
     ]
 
+    PAGO_DESTINO = 'destination'
+    PAGO_TIENDA = 'store'
+    PAGOS_DELIVERY = [
+        (PAGO_DESTINO, 'Pago en destino'),
+        (PAGO_TIENDA, 'Lo paga la tienda'),
+    ]
+
     ESTADO_PENDIENTE = 'pending'
     ESTADO_ASIGNADO = 'assigned'
     ESTADO_LLEGO_RECOGIDA = 'arrived_pickup'
@@ -449,6 +456,12 @@ class ServiceRequest(models.Model):
     distancia_metros = models.PositiveIntegerField(blank=True, null=True)
     duracion_segundos = models.PositiveIntegerField(blank=True, null=True)
     costo_estimado = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
+    pago_delivery = models.CharField(
+        max_length=20,
+        choices=PAGOS_DELIVERY,
+        default=PAGO_DESTINO,
+        help_text='Define quién asume el costo del delivery.',
+    )
     ruta_geojson = models.JSONField(blank=True, null=True)
     notas = models.TextField(blank=True, null=True)
     codigo_entrega = models.CharField(max_length=6, blank=True, null=True, editable=False)
