@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny, IsAdminUser
 from rest_framework import viewsets, status, permissions, generics
@@ -75,6 +73,7 @@ from .permissions import EsTienda
 from .services.realtime import broadcast_chat_message, broadcast_chat_read, notify_user
 from .services.push import send_push_to_user
 from .services.inventario import registrar_movimiento
+from .upload_validation import validate_chat_attachment, validate_image_upload
 
 
 class CreateUserView(generics.GenericAPIView):
@@ -168,6 +167,13 @@ class DriverDocumentosView(generics.GenericAPIView):
         for campo in self.CAMPOS:
             archivo = request.FILES.get(campo)
             if archivo:
+                try:
+                    validate_image_upload(archivo)
+                except DjangoValidationError as exc:
+                    return Response(
+                        {campo: exc.messages or ['La imagen no es válida.']},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
                 setattr(profile, campo, archivo)
                 recibidos.append(campo)
         if not recibidos:
@@ -657,11 +663,21 @@ class StoreOrderViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        captura = request.FILES.get('captura')
+        if captura:
+            try:
+                validate_image_upload(captura)
+            except DjangoValidationError as exc:
+                return Response(
+                    {'captura': exc.messages or ['La imagen no es válida.']},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
         pago = OrderPayment.objects.create(
             order=order,
             metodo=metodo,
             referencia=referencia,
-            captura=request.FILES.get('captura'),
+            captura=captura,
         )
 
         tienda_user_id = order.producto.tienda.usuario_id
@@ -1046,25 +1062,11 @@ class ConversationViewSet(viewsets.ModelViewSet):
             )
 
         if adjunto:
-            max_size = 10 * 1024 * 1024
-            if adjunto.size > max_size:
+            try:
+                validate_chat_attachment(adjunto)
+            except DjangoValidationError as exc:
                 return Response(
-                    {'error': 'El archivo no puede superar los 10 MB.'},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            nombre = str(getattr(adjunto, 'name', '') or '')
-            extension = Path(nombre).suffix.lower()
-            tipo = str(getattr(adjunto, 'content_type', '') or '').lower()
-            extensiones_permitidas = {
-                '.jpg', '.jpeg', '.png', '.webp', '.gif', '.heic', '.heif', '.pdf',
-            }
-            archivo_permitido = (
-                extension in extensiones_permitidas
-                and (tipo.startswith('image/') or tipo == 'application/pdf' or not tipo)
-            )
-            if not archivo_permitido:
-                return Response(
-                    {'error': 'Solo puedes adjuntar imágenes o archivos PDF.'},
+                    {'error': ' '.join(exc.messages) or 'El archivo adjunto no es válido.'},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 

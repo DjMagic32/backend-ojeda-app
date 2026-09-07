@@ -31,6 +31,7 @@ from .models import (
     MovimientoStock,
     ArticuloUsado,
 )
+from .upload_validation import validate_image_upload
 
 class UsuarioSerializer(serializers.ModelSerializer):
     avatar = serializers.ImageField(required=False, allow_null=True)
@@ -63,6 +64,11 @@ class UsuarioSerializer(serializers.ModelSerializer):
         # set_password. Nunca aceptamos una contraseña plana aquí.
         validated_data.pop('password', None)
         return super().update(instance, validated_data)
+
+    def validate_avatar(self, value):
+        if value is not None:
+            validate_image_upload(value)
+        return value
 
 class CategoriaSerializer(serializers.ModelSerializer):
     class Meta:
@@ -103,6 +109,10 @@ class ProductoTiendaSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({
                 'categoria': 'La categoría no corresponde al tipo publicado.',
             })
+        for field_name in ('imagen', 'imagen_2', 'imagen_3'):
+            image = attrs.get(field_name)
+            if image is not None:
+                validate_image_upload(image)
         return attrs
 
     def validate_codigo_barras(self, value):
@@ -182,6 +192,13 @@ class TiendaSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'usuario', 'verificada', 'creado']
 
+    def validate(self, attrs):
+        for field_name in ('logo', 'banner'):
+            image = attrs.get(field_name)
+            if image is not None:
+                validate_image_upload(image)
+        return attrs
+
 
 class TiendaPublicSerializer(serializers.ModelSerializer):
     """Datos públicos de una tienda, sin información fiscal ni de cobro."""
@@ -244,6 +261,11 @@ class RegisterUserSerializer(serializers.Serializer):
             validate_password(value)
         except DjangoValidationError as exc:
             raise serializers.ValidationError(exc.messages) from exc
+        return value
+
+    def validate_foto_identificacion(self, value):
+        if value is not None:
+            validate_image_upload(value)
         return value
     nombre = serializers.CharField(required=False, allow_blank=True)
     apellido = serializers.CharField(required=False, allow_blank=True)
@@ -372,6 +394,11 @@ class OrderPaymentSerializer(serializers.ModelSerializer):
             'actualizado',
         ]
         read_only_fields = ['id', 'order', 'estado', 'motivo_rechazo', 'creado', 'actualizado']
+
+    def validate_captura(self, value):
+        if value is not None:
+            validate_image_upload(value)
+        return value
 
 
 class StoreOrderItemSerializer(serializers.ModelSerializer):
@@ -641,3 +668,10 @@ class ArticuloUsadoSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         validated_data['vendedor'] = self.context['request'].user
         return super().create(validated_data)
+
+    def validate(self, attrs):
+        for field_name in ('imagen', 'imagen_2'):
+            image = attrs.get(field_name)
+            if image is not None:
+                validate_image_upload(image)
+        return attrs

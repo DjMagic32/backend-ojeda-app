@@ -1,4 +1,4 @@
-from rest_framework_simplejwt.views import TokenObtainPairView
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework.response import Response
 from rest_framework.exceptions import AuthenticationFailed
@@ -27,3 +27,9 @@ class CustomTokenObtainPairView(TokenObtainPairView):
         except Exception as e:
             logger.error(f"Unexpected error: {str(e)}")
             return Response({"detail": "An unexpected error occurred."}, status=400)
+
+
+class CustomTokenRefreshView(TokenRefreshView):
+    """Aplica el mismo límite de autenticación a la renovación de JWT."""
+
+    throttle_scope = 'auth'

@@ -9,15 +9,12 @@ from drf_spectacular.views import (
     SpectacularRedocView,
     SpectacularSwaggerView,
 )
-from .views import CustomTokenObtainPairView
+from .views import CustomTokenObtainPairView, CustomTokenRefreshView
 from .graphql import JWTGraphQLView
 from .schema import schema
 
 
 
-from rest_framework_simplejwt.views import (
-    TokenRefreshView,
-)
 from rest_framework.permissions import AllowAny, IsAdminUser
 
 
@@ -35,7 +32,7 @@ urlpatterns = [
     path('api/store/', include('store.urls')),  # Aquí asegúrate de que la ruta sea correcta
     # JWT token endpoints
     path('api/token/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
-    path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    path('api/token/refresh/', CustomTokenRefreshView.as_view(), name='token_refresh'),
     path('api/graphql/', JWTGraphQLView.as_view(schema=schema), name='graphql'),
 ]
 
