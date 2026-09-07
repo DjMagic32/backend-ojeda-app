@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.1/ref/settings/
 """
 from decouple import Csv, config
+from django.core.exceptions import ImproperlyConfigured
 import os
 from urllib.parse import unquote, urlparse
 
@@ -39,12 +40,21 @@ def first_env_value(*names, default=''):
 # See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = config('DJANGO_SECRET_KEY', default='django-insecure-change-me')
+# No usamos una clave insegura por defecto: si producción arranca sin la
+# variable, es preferible fallar al iniciar que firmar tokens con una clave
+# conocida.
+SECRET_KEY = config('DJANGO_SECRET_KEY', default='').strip()
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = config('DJANGO_DEBUG', default=True, cast=bool)
+DEBUG = config('DJANGO_DEBUG', default=False, cast=bool)
+if not SECRET_KEY:
+    if not DEBUG:
+        raise ImproperlyConfigured(
+            'DJANGO_SECRET_KEY es obligatorio cuando DJANGO_DEBUG=False.'
+        )
+    SECRET_KEY = 'django-insecure-local-development-only'
 
-default_allowed_hosts = ['0.0.0.0', 'localhost', '127.0.0.1']
+default_allowed_hosts = ['0.0.0.0', 'localhost', '127.0.0.1'] if DEBUG else []
 ALLOWED_HOSTS = config(
     'DJANGO_ALLOWED_HOSTS',
     default=','.join(default_allowed_hosts),
@@ -56,12 +66,24 @@ railway_public_domain = config('RAILWAY_PUBLIC_DOMAIN', default='').strip()
 if railway_public_domain:
     ALLOWED_HOSTS.append(railway_public_domain)
 
-CSRF_TRUSTED_ORIGINS = [
-    # Permite acceder vía túneles de ngrok sin disparar el chequeo de origen
-    'https://*.ngrok-free.app',
-    # Permite subdominios temporales de Cloudflare Tunnel
-    'https://*.trycloudflare.com',
-]
+if not DEBUG:
+    if not ALLOWED_HOSTS:
+        raise ImproperlyConfigured(
+            'Configura DJANGO_ALLOWED_HOSTS o RAILWAY_PUBLIC_DOMAIN en producción.'
+        )
+    if '*' in ALLOWED_HOSTS:
+        raise ImproperlyConfigured(
+            'DJANGO_ALLOWED_HOSTS no puede contener * en producción.'
+        )
+
+CSRF_TRUSTED_ORIGINS = []
+if DEBUG:
+    CSRF_TRUSTED_ORIGINS.extend([
+        # Permite acceder vía túneles de ngrok sin disparar el chequeo de origen
+        'https://*.ngrok-free.app',
+        # Permite subdominios temporales de Cloudflare Tunnel
+        'https://*.trycloudflare.com',
+    ])
 # Django 4+ exige scheme en cada origen; descartamos valores inválidos (ej. "*")
 # que llegan por env para no tumbar el deploy con SystemCheckError 4_0.E001.
 CSRF_TRUSTED_ORIGINS.extend(
@@ -145,6 +167,23 @@ if REDIS_URL:
 else:
     CHANNEL_LAYERS = {
         'default': {'BACKEND': 'channels.layers.InMemoryChannelLayer'},
+    }
+
+if REDIS_URL:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+            'LOCATION': REDIS_URL,
+        },
+    }
+else:
+    # Desarrollo local. En producción REDIS_URL debe estar configurada para
+    # que los límites de solicitudes funcionen entre todos los workers.
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+            'LOCATION': 'tuplaza-security',
+        },
     }
 
 EXPO_PUSH_DISABLED = config('EXPO_PUSH_DISABLED', default=False, cast=bool)
@@ -256,7 +295,23 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.IsAuthenticated',
     ],
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+        'rest_framework.throttling.ScopedRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': config('DRF_ANON_RATE', default='60/min'),
+        'user': config('DRF_USER_RATE', default='300/min'),
+        'auth': config('DRF_AUTH_RATE', default='10/min'),
+        'registration': config('DRF_REGISTRATION_RATE', default='5/hour'),
+        'email_check': config('DRF_EMAIL_CHECK_RATE', default='30/min'),
+    },
 }
+
+SERVE_API_DOCS = config('DJANGO_SERVE_API_DOCS', default=DEBUG, cast=bool)
+GRAPHQL_RATE_LIMIT = config('GRAPHQL_RATE_LIMIT', default=120, cast=int)
+GRAPHQL_AUTH_RATE_LIMIT = config('GRAPHQL_AUTH_RATE_LIMIT', default=10, cast=int)
 
 SPECTACULAR_SETTINGS = {
     'TITLE': 'Ojeda Backend API',
@@ -268,7 +323,10 @@ SPECTACULAR_SETTINGS = {
     ),
     'VERSION': '1.0.0',
     'SERVE_INCLUDE_SCHEMA': False,
-    'SERVE_PERMISSIONS': ['rest_framework.permissions.AllowAny'],
+    'SERVE_PERMISSIONS': [
+        'rest_framework.permissions.AllowAny'
+        if DEBUG else 'rest_framework.permissions.IsAdminUser'
+    ],
     'SERVE_AUTHENTICATION': [],
     'COMPONENT_SPLIT_REQUEST': True,
     'SWAGGER_UI_SETTINGS': {
@@ -405,13 +463,26 @@ else:
     }
     MEDIA_URL = '/media/'
     MEDIA_ROOT = Path(config('DJANGO_MEDIA_ROOT', default=str(BASE_DIR / 'media')))
-    SERVE_MEDIA = config('DJANGO_SERVE_MEDIA', default=DEBUG, cast=bool)
+    # En producción no servimos archivos subidos desde Django aunque quede
+    # una variable antigua con valor True. Deben salir por almacenamiento
+    # privado (S3/R2) con URLs temporales.
+    SERVE_MEDIA = DEBUG and config('DJANGO_SERVE_MEDIA', default=True, cast=bool)
 
 USE_X_FORWARDED_HOST = True
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 if not DEBUG:
+    SECURE_SSL_REDIRECT = config('DJANGO_SECURE_SSL_REDIRECT', default=True, cast=bool)
+    SECURE_HSTS_SECONDS = 31536000
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    SECURE_REFERRER_POLICY = 'same-origin'
+    X_FRAME_OPTIONS = 'DENY'
     CSRF_COOKIE_SECURE = True
     SESSION_COOKIE_SECURE = True
+    SESSION_COOKIE_HTTPONLY = True
+    SESSION_COOKIE_SAMESITE = 'Lax'
+    CSRF_COOKIE_SAMESITE = 'Lax'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'

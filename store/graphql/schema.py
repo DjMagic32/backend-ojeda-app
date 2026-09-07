@@ -860,6 +860,14 @@ class UpdateStoreOrderStatus(graphene.Mutation):
         if order.estado == normalized_status:
             return UpdateStoreOrderStatus(order=order)
 
+        if order.estado in {
+            StoreOrder.ESTADO_COMPLETADO,
+            StoreOrder.ESTADO_CANCELADO,
+        }:
+            raise GraphQLError(
+                "Una orden completada o cancelada no puede cambiar de estado"
+            )
+
         order.estado = normalized_status
         order.save(update_fields=["estado", "actualizado"])
         return UpdateStoreOrderStatus(order=order)

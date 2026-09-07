@@ -1,14 +1,14 @@
 from pathlib import Path
 
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.permissions import IsAuthenticated, AllowAny, IsAdminUser
 from rest_framework import viewsets, status, permissions, generics
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.exceptions import ValidationError
 from drf_spectacular.utils import extend_schema
 
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Q
 from rest_framework.decorators import action
 
@@ -47,6 +47,7 @@ from .serializers import (
     StoreDashboardSerializer,
     TasaCambioSerializer,
     TiendaSerializer,
+    TiendaPublicSerializer,
     ProductoTiendaSerializer,
     ComentarioSerializer,
     ComentarioProductoSerializer,
@@ -79,6 +80,7 @@ from .services.inventario import registrar_movimiento
 class CreateUserView(generics.GenericAPIView):
     permission_classes = [permissions.AllowAny]
     serializer_class = UsuarioSerializer
+    throttle_scope = 'registration'
 
     @extend_schema(
         request=RegisterUserSerializer,
@@ -99,42 +101,51 @@ class CreateUserView(generics.GenericAPIView):
         data['email'] = email  # Guardamos el email en minúsculas
         data['username'] = email  # Usamos el email como username
 
-        # Creamos el usuario manualmente sin guardarlo aún
-        usuario = Usuario(
-            email=email,
-            username=email,
-            first_name=data.get('nombre', ''),  # Corregimos el nombre
-            last_name=data.get('apellido', ''),  # Corregimos el apellido
-            rol=data.get('rol', Usuario.ES_CLIENTE),  # Valor por defecto
-            telefono=data.get('telefono', ''),  # Agregamos el teléfono
-            genero=data.get('genero', None),  # Agregamos el género
-            edad=data.get('edad', None),  # Agregamos la edad
-            cedula_pasaporte=data.get('cedula_pasaporte', None),  # Agregamos la cédula/pasaporte
-            ingresos_minimos_mensuales=data.get('ingresos_minimos_mensuales') or None,
-        )
-        usuario.set_password(data['password'])  # Hasheamos la contraseña
-        usuario.save()  # Guardamos el usuario en la base de datos
+        try:
+            with transaction.atomic():
+                # Creamos el usuario manualmente sin guardarlo aún
+                usuario = Usuario(
+                    email=email,
+                    username=email,
+                    first_name=data.get('nombre', ''),  # Corregimos el nombre
+                    last_name=data.get('apellido', ''),  # Corregimos el apellido
+                    rol=data.get('rol', Usuario.ES_CLIENTE),  # Valor por defecto
+                    telefono=data.get('telefono', ''),  # Agregamos el teléfono
+                    genero=data.get('genero', None),  # Agregamos el género
+                    edad=data.get('edad', None),  # Agregamos la edad
+                    cedula_pasaporte=data.get('cedula_pasaporte', None),  # Agregamos la cédula/pasaporte
+                    ingresos_minimos_mensuales=data.get('ingresos_minimos_mensuales') or None,
+                )
+                usuario.set_password(data['password'])  # Hasheamos la contraseña
+                usuario.save()  # Guardamos el usuario en la base de datos
 
-        # Si el usuario es de tipo TIENDA, creamos también la tienda
-        if usuario.rol == Usuario.ES_TIENDA:
-            tienda_data = {
-                'usuario': usuario.id,
-                'nombre': data.get('nombre_tienda') or '',
-                'direccion': data.get('direccion') or '',
-                'telefono': data.get('telefono_tienda') or '',
-                'informacion_fiscal': data.get('informacion_fiscal') or '',
-                'ubicacion_lat': data.get('ubicacion_lat'),
-                'ubicacion_lng': data.get('ubicacion_lng'),
-            }
-            if tienda_data['ubicacion_lat'] is not None and tienda_data['ubicacion_lng'] is not None:
-                from django.utils import timezone
-                tienda_data['ubicacion_actualizada'] = timezone.now()
-            tienda_serializer = TiendaSerializer(data=tienda_data)
-            if tienda_serializer.is_valid():
-                tienda_serializer.save()
-            else:
-                usuario.delete()  # Eliminamos el usuario si la tienda falla
-                return Response(tienda_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+                # Si el usuario es de tipo TIENDA, creamos también la tienda
+                if usuario.rol == Usuario.ES_TIENDA:
+                    tienda_data = {
+                        'usuario': usuario.id,
+                        'nombre': data.get('nombre_tienda') or '',
+                        'direccion': data.get('direccion') or '',
+                        'telefono': data.get('telefono_tienda') or '',
+                        'informacion_fiscal': data.get('informacion_fiscal') or '',
+                        'ubicacion_lat': data.get('ubicacion_lat'),
+                        'ubicacion_lng': data.get('ubicacion_lng'),
+                    }
+                    if tienda_data['ubicacion_lat'] is not None and tienda_data['ubicacion_lng'] is not None:
+                        from django.utils import timezone
+                        tienda_data['ubicacion_actualizada'] = timezone.now()
+                    tienda_serializer = TiendaSerializer(data=tienda_data)
+                    if tienda_serializer.is_valid():
+                        tienda_serializer.save()
+                    else:
+                        raise ValidationError(tienda_serializer.errors)
+        except ValidationError as exc:
+            return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
+        except IntegrityError:
+            # Protege también la carrera entre la validación y el guardado.
+            return Response(
+                {'cedula_pasaporte': ['Esta cédula o pasaporte ya está registrado.']},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         # Serializamos el usuario ya creado para devolverlo en la respuesta
         usuario_serializer = UsuarioSerializer(usuario)
@@ -174,6 +185,7 @@ class DriverDocumentosView(generics.GenericAPIView):
 
 class EmailDisponibleView(generics.GenericAPIView):
     permission_classes = [permissions.AllowAny]
+    throttle_scope = 'email_check'
 
     @extend_schema(
         description="Indica si un email ya está registrado (para validar en vivo el registro).",
@@ -192,6 +204,9 @@ class EmailDisponibleView(generics.GenericAPIView):
 class UsuarioViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     serializer_class = UsuarioSerializer
+    # El alta y la baja de cuentas no se hacen por este endpoint. El registro
+    # tiene su flujo propio y desactivar cuentas debe ser una acción explícita.
+    http_method_names = ['get', 'put', 'patch', 'head', 'options']
 
     def get_queryset(self):
         # Sin esto, cualquier usuario autenticado podía leer, editar o
@@ -203,14 +218,22 @@ class UsuarioViewSet(viewsets.ModelViewSet):
         return Usuario.objects.filter(pk=user.pk)
 
 class CategoriaViewSet(viewsets.ModelViewSet):
-    permission_classes = [AllowAny]
     queryset = Categoria.objects.all()
     serializer_class = CategoriaSerializer
 
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [AllowAny()]
+        return [IsAdminUser()]
+
 class ProductoViewSet(viewsets.ModelViewSet):
-    #permission_classes = [IsAuthenticated]
     queryset = Producto.objects.all()
     serializer_class = ProductoSerializer
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [AllowAny()]
+        return [IsAdminUser()]
 
 class CarritoView(generics.GenericAPIView):
     serializer_class = CarritoSerializer
@@ -218,17 +241,12 @@ class CarritoView(generics.GenericAPIView):
 
     @extend_schema(responses=CarritoSerializer)
     def get(self, request):
-        # Debug auth
-        user = getattr(request, "user", None)
-        print("[CarritoView][GET] user:", user, "is_authenticated:", getattr(user, "is_authenticated", False))
         carrito, _ = Carrito.objects.get_or_create(usuario=request.user)
         serializer = CarritoSerializer(carrito)
         return Response(serializer.data)
 
     @extend_schema(request=CarritoItemAddSerializer, responses=CarritoSerializer)
     def post(self, request):
-        user = getattr(request, "user", None)
-        print("[CarritoView][POST] user:", user, "is_authenticated:", getattr(user, "is_authenticated", False))
         payload = CarritoItemAddSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
 
@@ -256,8 +274,6 @@ class CarritoView(generics.GenericAPIView):
 
     @extend_schema(request=CarritoItemUpdateSerializer, responses=CarritoSerializer)
     def patch(self, request):
-        user = getattr(request, "user", None)
-        print("[CarritoView][PATCH] user:", user, "is_authenticated:", getattr(user, "is_authenticated", False))
         payload = CarritoItemUpdateSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
 
@@ -288,8 +304,6 @@ class CarritoView(generics.GenericAPIView):
 
     @extend_schema(request=CarritoItemRemoveSerializer, responses=CarritoSerializer)
     def delete(self, request):
-        user = getattr(request, "user", None)
-        print("[CarritoView][DELETE] user:", user, "is_authenticated:", getattr(user, "is_authenticated", False))
         payload = CarritoItemRemoveSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
 
@@ -344,10 +358,26 @@ class PedidoView(generics.GenericAPIView):
         return Response(serializer.data)
 
 class TiendaViewSet(viewsets.ModelViewSet):
-    
-    #permission_classes = [EsTienda, IsAuthenticated]
     queryset = Tienda.objects.all()
     serializer_class = TiendaSerializer
+
+    def get_serializer_class(self):
+        if self.action in ('list', 'retrieve'):
+            return TiendaPublicSerializer
+        return TiendaSerializer
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [AllowAny()]
+        return [IsAuthenticated(), EsTienda()]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if self.action in ('update', 'partial_update', 'destroy'):
+            user = self.request.user
+            if not user.is_staff:
+                queryset = queryset.filter(usuario=user)
+        return queryset
 
     def perform_create(self, serializer):
         serializer.save(usuario=self.request.user)
@@ -531,7 +561,22 @@ class VentaPresencialCreateView(generics.GenericAPIView):
 class StoreOrderViewSet(viewsets.ModelViewSet):
     serializer_class = StoreOrderSerializer
     permission_classes = [IsAuthenticated]
+    http_method_names = ['get', 'post', 'patch', 'head', 'options']
     queryset = StoreOrder.objects.select_related('producto', 'producto__tienda', 'usuario')
+
+    def update(self, request, *args, **kwargs):
+        return Response(
+            {'error': 'Las órdenes no se pueden reemplazar. Usa las acciones disponibles.'},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
+
+    def partial_update(self, request, *args, **kwargs):
+        # PATCH se reserva para la acción /pago/; no se permite alterar
+        # producto, cantidad o propietario desde el endpoint base.
+        return Response(
+            {'error': 'Las órdenes no se pueden editar directamente.'},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
 
     def get_queryset(self):
         user = self.request.user
@@ -698,28 +743,72 @@ class MiTiendaView(generics.GenericAPIView):
 
 
 class ComentarioViewSet(viewsets.ModelViewSet):
-    #permission_classes = [IsAuthenticated]
     queryset = Comentario.objects.all()
     serializer_class = ComentarioSerializer
 
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [AllowAny()]
+        return [IsAuthenticated()]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if self.action in ('update', 'partial_update', 'destroy'):
+            queryset = queryset.filter(usuario=self.request.user)
+        return queryset
+
+    def perform_create(self, serializer):
+        serializer.save(usuario=self.request.user)
+
 class ComentarioProductoViewSet(viewsets.ModelViewSet):
-    #permission_classes = [IsAuthenticated]
     queryset = ComentarioProducto.objects.all()
     serializer_class = ComentarioProductoSerializer
 
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [AllowAny()]
+        return [IsAuthenticated()]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if self.action in ('update', 'partial_update', 'destroy'):
+            queryset = queryset.filter(usuario=self.request.user)
+        return queryset
+
+    def perform_create(self, serializer):
+        serializer.save(usuario=self.request.user)
+
 class ReferenciaViewSet(viewsets.ModelViewSet):
-    #permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated]
     queryset = Referencia.objects.all()
     serializer_class = ReferenciaSerializer
 
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if not self.request.user.is_staff:
+            queryset = queryset.filter(usuario=self.request.user)
+        return queryset
+
+    def perform_create(self, serializer):
+        serializer.save(usuario=self.request.user)
+
 class WalletViewSet(viewsets.ModelViewSet):
-    #permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated]
+    http_method_names = ['get', 'head', 'options']
     queryset = Wallet.objects.all()
     serializer_class = WalletSerializer
 
+    def get_queryset(self):
+        if self.request.user.is_staff:
+            return super().get_queryset()
+        return super().get_queryset().filter(usuario=self.request.user)
+
 class WalletActionView(generics.GenericAPIView):
     serializer_class = WalletSerializer
-    # permission_classes = [IsAuthenticated]
+    # No se puede acuñar saldo desde un endpoint accesible a cualquier
+    # usuario autenticado. Las cargas reales deben pasar por un proveedor de
+    # pagos o una acción administrativa auditada.
+    permission_classes = [IsAdminUser]
 
     @extend_schema(
         request=WalletActionRequestSerializer,
@@ -803,16 +892,12 @@ class ProductoFavoritoView(generics.GenericAPIView):
 
     @extend_schema(responses=ProductoFavoritoSerializer(many=True))
     def get(self, request):
-        user = getattr(request, "user", None)
-        print("[Favoritos][GET] user:", user, "is_authenticated:", getattr(user, "is_authenticated", False))
         favoritos = ProductoFavorito.objects.filter(usuario=request.user).select_related('producto')
         serializer = ProductoFavoritoSerializer(favoritos, many=True)
         return Response(serializer.data)
 
     @extend_schema(request=ProductoFavoritoSerializer, responses=ProductoFavoritoSerializer)
     def post(self, request):
-        user = getattr(request, "user", None)
-        print("[Favoritos][POST] user:", user, "is_authenticated:", getattr(user, "is_authenticated", False))
         producto_id = request.data.get('producto')
         if not producto_id:
             return Response({'error': 'producto es requerido'}, status=status.HTTP_400_BAD_REQUEST)
@@ -837,8 +922,6 @@ class ProductoFavoritoView(generics.GenericAPIView):
 
     @extend_schema(request=ProductoFavoritoSerializer, responses=ProductoFavoritoSerializer)
     def delete(self, request):
-        user = getattr(request, "user", None)
-        print("[Favoritos][DELETE] user:", user, "is_authenticated:", getattr(user, "is_authenticated", False))
         producto_id = request.data.get('producto')
         if not producto_id:
             return Response({'error': 'producto es requerido'}, status=status.HTTP_400_BAD_REQUEST)

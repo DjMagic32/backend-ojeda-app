@@ -106,3 +106,21 @@ Si te encuentras con problemas comunes como "el contenedor de la base de datos n
 ---
 
 Este `README.md` proporciona una guía completa para arrancar el proyecto desde cero y realizar las migraciones correctamente. Puedes ajustar cualquier sección dependiendo de la configuración de tu proyecto o si tienes pasos adicionales que realizar.
+
+## Configuración mínima de producción
+
+En Railway configura estas variables antes de desplegar:
+
+```env
+DJANGO_DEBUG=False
+DJANGO_SECRET_KEY=<clave-larga-aleatoria-y-privada>
+DJANGO_ALLOWED_HOSTS=<dominio-publico-de-railway>
+DJANGO_SERVE_API_DOCS=False
+DJANGO_SECURE_SSL_REDIRECT=True
+REDIS_URL=<url-del-servicio-redis>
+```
+
+`DJANGO_SECRET_KEY` no debe reutilizarse entre entornos ni subirse al
+repositorio. Si falta en producción, el backend ahora detiene el arranque.
+La documentación interactiva queda cerrada fuera de desarrollo y los límites
+de solicitudes usan Redis cuando `REDIS_URL` está disponible.

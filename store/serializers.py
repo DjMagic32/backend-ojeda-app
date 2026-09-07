@@ -38,11 +38,31 @@ class UsuarioSerializer(serializers.ModelSerializer):
     class Meta:
         model = Usuario
         fields = '__all__'
-        # write_only: lo más importante es que el hash de la contraseña
-        # nunca se incluya en las respuestas. El cambio real de contraseña
-        # pasa por set_password en las mutations dedicadas
-        # (ChangePassword/ResetPassword), no por este serializer.
         extra_kwargs = {'password': {'write_only': True}}
+        read_only_fields = [
+            'id',
+            'last_login',
+            'username',
+            'email',
+            'is_superuser',
+            'is_staff',
+            'is_active',
+            'date_joined',
+            'groups',
+            'user_permissions',
+            'rol',
+            'cedula_pasaporte',
+            'foto_identificacion',
+            'ingresos_minimos_mensuales',
+            'es_conductor',
+            'registro_completo',
+        ]
+
+    def update(self, instance, validated_data):
+        # El cambio de contraseña tiene endpoints dedicados que llaman a
+        # set_password. Nunca aceptamos una contraseña plana aquí.
+        validated_data.pop('password', None)
+        return super().update(instance, validated_data)
 
 class CategoriaSerializer(serializers.ModelSerializer):
     class Meta:
@@ -141,27 +161,72 @@ class PedidoSerializer(serializers.ModelSerializer):
 class TiendaSerializer(serializers.ModelSerializer):
     class Meta:
         model = Tienda
-        fields = '__all__'
+        fields = [
+            'id',
+            'usuario',
+            'nombre',
+            'descripcion',
+            'direccion',
+            'telefono',
+            'logo',
+            'banner',
+            'informacion_fiscal',
+            'ubicacion_lat',
+            'ubicacion_lng',
+            'ubicacion_actualizada',
+            'pago_movil_banco',
+            'pago_movil_telefono',
+            'pago_movil_cedula',
+            'verificada',
+            'creado',
+        ]
+        read_only_fields = ['id', 'usuario', 'verificada', 'creado']
+
+
+class TiendaPublicSerializer(serializers.ModelSerializer):
+    """Datos públicos de una tienda, sin información fiscal ni de cobro."""
+
+    class Meta:
+        model = Tienda
+        fields = [
+            'id',
+            'nombre',
+            'descripcion',
+            'direccion',
+            'telefono',
+            'logo',
+            'banner',
+            'ubicacion_lat',
+            'ubicacion_lng',
+            'ubicacion_actualizada',
+            'verificada',
+            'creado',
+        ]
+        read_only_fields = fields
 
 class ComentarioSerializer(serializers.ModelSerializer):
     class Meta:
         model = Comentario
         fields = '__all__'
+        read_only_fields = ['id', 'usuario', 'creado']
 
 class ComentarioProductoSerializer(serializers.ModelSerializer):
     class Meta:
         model = ComentarioProducto
         fields = '__all__'
+        read_only_fields = ['id', 'usuario', 'creado']
 
 class ReferenciaSerializer(serializers.ModelSerializer):
     class Meta:
         model = Referencia
         fields = '__all__'
+        read_only_fields = ['id', 'usuario', 'creado']
 
 class WalletSerializer(serializers.ModelSerializer):
     class Meta:
         model = Wallet
         fields = '__all__'
+        read_only_fields = ['id', 'usuario', 'saldo', 'actualizado']
 
 
 class RegisterUserSerializer(serializers.Serializer):
@@ -225,6 +290,44 @@ class RegisterUserSerializer(serializers.Serializer):
     ingresos_minimos_mensuales = serializers.CharField(
         required=False, allow_blank=True, allow_null=True
     )
+
+    def validate_cedula_pasaporte(self, value):
+        """Normaliza la identificación y evita un error 500 por duplicados."""
+        cleaned = (value or '').strip()
+        if not cleaned:
+            return None
+        if Usuario.objects.filter(cedula_pasaporte__iexact=cleaned).exists():
+            raise serializers.ValidationError(
+                'Esta cédula o pasaporte ya está registrado.'
+            )
+        return cleaned
+
+    def validate_ingresos_minimos_mensuales(self, value):
+        """El ingreso es opcional, pero si se informa debe ser un monto válido."""
+        if value is None or value == '':
+            return None
+
+        normalized = str(value).strip().replace(',', '.')
+        try:
+            amount = Decimal(normalized)
+        except Exception as exc:
+            raise serializers.ValidationError(
+                'Ingresa un monto válido o deja este campo vacío.'
+            ) from exc
+
+        if amount < 0:
+            raise serializers.ValidationError(
+                'Los ingresos mínimos mensuales no pueden ser negativos.'
+            )
+        if len(normalized.replace('.', '').lstrip('+-')) > 10:
+            raise serializers.ValidationError(
+                'El monto de ingresos es demasiado grande.'
+            )
+        if abs(amount.as_tuple().exponent) > 2:
+            raise serializers.ValidationError(
+                'Los ingresos pueden tener como máximo dos decimales.'
+            )
+        return amount
 
 
 class CarritoItemAddSerializer(serializers.Serializer):
