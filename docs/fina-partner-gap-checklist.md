@@ -259,8 +259,12 @@ no se modificó inventario operativo y no se activaron reservas ni idempotencia.
 - **Verificación local:** `[x]` compilación Python, 68 pruebas de backend y 39 de frontend;
   TypeScript conserva exactamente los 75 errores previos. Comparación estática de todos los
   campos, opciones y restricciones de los modelos nuevos contra `0041`, sin diferencias.
-- **Despliegue/migración:** `[ ]` pendiente aplicar `0041` por el endpoint autorizado después
-  de desplegar este bloque. El aviso anterior de modelos sin migración sigue separado.
+- **Despliegue/migración:** `[x]` Railway confirmó la revisión `54575eb` que incluye `0041`;
+  el endpoint autorizado respondió `200` y “No migrations to apply”, confirmando que ya
+  estaba aplicada. Smoke: salud `200` y 17 consultas/operaciones administrativas anónimas
+  rechazadas con `401`, incluidas las rutas de caja. Esto no acredita un flujo autenticado.
+  El aviso anterior de modelos sin migración sigue separado; no se crearon correcciones
+  automáticas para diferencias no diagnosticadas.
 
 ## Conclusión ejecutiva
 

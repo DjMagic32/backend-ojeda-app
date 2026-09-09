@@ -523,7 +523,12 @@ Sólo el dueño de la tienda accede; permisos de empleados siguen pendientes.
 - `[x]` `npx tsc --noEmit`: salida idéntica antes/después, 75 errores preexistentes.
 - `[x]` `0041_sesiones_caja` comparada estáticamente con modelos: tres `CreateModel`, campos,
   opciones y restricciones equivalentes. Depende de `0040`; no altera tablas anteriores.
-- `[ ]` Aplicar `0041` por el endpoint autorizado tras confirmar el despliegue.
+- `[x]` Confirmar `0041` aplicada: Railway sirvió `54575ebf503c964d94dabb971b79b3bb872a74e3`;
+  `POST /api/store/admin/run-migrations/` autorizado devolvió `200` y “No migrations to apply”.
+  No fue necesario ejecutar migraciones adicionales; el aviso previo de modelos continúa.
+- `[x]` Smoke sobre esa revisión: salud `200` y 17 casos administrativos anónimos `401`,
+  incluidos listado/detalle de sesiones, disponibilidad/venta de caja y operaciones/cancelación.
+  Se comprobó disponibilidad y autenticación requerida, no el resultado de operaciones reales.
 - `[ ]` Ejecutar los 7 nuevos casos PostgreSQL (suite total: 29): apertura concurrente,
   cierre frente a venta, replay tras cierre y conflicto de medio, retiros/conteos, aislamiento,
   validación y cancelación de apertura. Preparados, sin ejecutar localmente por CONVENTIONS.md.
