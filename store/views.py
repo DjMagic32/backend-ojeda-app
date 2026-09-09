@@ -89,7 +89,7 @@ from .models import MovimientoStock, StoreOrderItem, ArticuloUsado
 from .permissions import EsTienda
 from .services.realtime import broadcast_chat_message, broadcast_chat_read, notify_user
 from .services.push import send_push_to_user
-from .services.inventario import registrar_movimiento, transferir_stock
+from .services.inventario import registrar_movimiento, reservar_stock_orden, transferir_stock
 from .upload_validation import validate_chat_attachment, validate_image_upload
 
 logger = logging.getLogger(__name__)
@@ -858,14 +858,21 @@ class StoreOrderViewSet(viewsets.ModelViewSet):
         total = precio_unitario * cantidad
         tasa = TasaCambio.vigente()
 
-        serializer.save(
-            usuario=user,
-            precio_unitario=precio_unitario,
-            total=total,
-            moneda=producto.moneda,
-            tasa_aplicada=tasa.valor_bs if tasa else None,
-            estado=StoreOrder.ESTADO_PENDIENTE,
-        )
+        try:
+            with transaction.atomic():
+                order = serializer.save(
+                    usuario=user,
+                    precio_unitario=precio_unitario,
+                    total=total,
+                    moneda=producto.moneda,
+                    tasa_aplicada=tasa.valor_bs if tasa else None,
+                    estado=StoreOrder.ESTADO_PENDIENTE,
+                )
+                reservar_stock_orden(order)
+        except DjangoValidationError as exc:
+            raise ValidationError(
+                exc.messages[0] if exc.messages else 'No se pudo reservar el inventario.'
+            ) from exc
 
     @action(
         detail=True,

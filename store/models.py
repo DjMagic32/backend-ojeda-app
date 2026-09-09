@@ -552,6 +552,63 @@ class StoreOrderItem(models.Model):
         return f"{self.cantidad} x {self.producto.nombre} (orden #{self.order_id})"
 
 
+class ReservaInventario(models.Model):
+    """Cantidad apartada para una orden online mientras la tienda la procesa."""
+
+    ESTADO_ACTIVA = 'activa'
+    ESTADO_CONSUMIDA = 'consumida'
+    ESTADO_LIBERADA = 'liberada'
+    ESTADO_EXPIRADA = 'expirada'
+    ESTADOS = [
+        (ESTADO_ACTIVA, 'Activa'),
+        (ESTADO_CONSUMIDA, 'Consumida'),
+        (ESTADO_LIBERADA, 'Liberada'),
+        (ESTADO_EXPIRADA, 'Expirada'),
+    ]
+
+    order = models.ForeignKey(
+        StoreOrder,
+        on_delete=models.CASCADE,
+        related_name='reservas',
+    )
+    producto = models.ForeignKey(
+        ProductoTienda,
+        on_delete=models.CASCADE,
+        related_name='reservas_inventario',
+    )
+    almacen = models.ForeignKey(
+        Almacen,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='reservas_inventario',
+    )
+    cantidad = models.PositiveIntegerField()
+    expira_en = models.DateTimeField()
+    estado = models.CharField(
+        max_length=12,
+        choices=ESTADOS,
+        default=ESTADO_ACTIVA,
+    )
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=['producto', 'estado'],
+                name='store_reserva_product_state_idx',
+            ),
+            models.Index(
+                fields=['order', 'estado'],
+                name='store_reserva_order_state_idx',
+            ),
+        ]
+
+    def __str__(self):
+        return f'Reserva #{self.id} · {self.cantidad} x {self.producto.nombre} ({self.estado})'
+
+
 class OrderPayment(models.Model):
     METODO_PAGO_MOVIL = 'pago_movil'
     METODO_EFECTIVO = 'efectivo'

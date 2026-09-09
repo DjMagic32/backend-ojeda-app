@@ -177,36 +177,19 @@ def notificar_orden(sender, instance: StoreOrder, created, **kwargs):
 
 
 @receiver(post_save, sender=StoreOrder)
-def descontar_stock_orden_completada(sender, instance: StoreOrder, created, **kwargs):
-    """Al completarse una orden online, descuenta stock y deja trazabilidad."""
+def gestionar_stock_orden(sender, instance: StoreOrder, created, **kwargs):
+    """Mantiene reservas al cambiar una orden fuera de la mutación GraphQL."""
     if instance.canal != StoreOrder.CANAL_ONLINE:
-        return
-    if instance.estado != StoreOrder.ESTADO_COMPLETADO:
         return
     if not created and getattr(instance, '_estado_previo', None) == instance.estado:
         return
-    if MovimientoStock.objects.filter(order=instance).exists():
-        return
 
-    from .services.inventario import registrar_movimiento
+    from .services.inventario import consumir_reservas_orden, liberar_reservas_orden
 
-    items = list(instance.items.select_related('producto'))
-    if not items:
-        items = [instance]
-    for item in items:
-        producto = item.producto
-        if producto.tipo == ProductoTienda.TIPO_SERVICIO or producto.stock is None:
-            continue
-        delta = -min(item.cantidad, producto.stock)
-        if delta == 0:
-            continue
-        registrar_movimiento(
-            producto,
-            MovimientoStock.TIPO_VENTA,
-            delta,
-            MovimientoStock.ORIGEN_ORDEN_ONLINE,
-            order=instance,
-        )
+    if instance.estado == StoreOrder.ESTADO_COMPLETADO:
+        consumir_reservas_orden(instance)
+    elif instance.estado == StoreOrder.ESTADO_CANCELADO:
+        liberar_reservas_orden(instance)
 
 
 @receiver(pre_save, sender=DriverProfile)
