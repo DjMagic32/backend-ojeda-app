@@ -99,6 +99,9 @@ if railway_public_domain:
 MAPBOX_ACCESS_TOKEN = config('MAPBOX_TOKEN', default=None)
 GOOGLE_WEB_CLIENT_ID = config('GOOGLE_WEB_CLIENT_ID', default='')
 PHOTON_API_URL = config('PHOTON_API_URL', default='https://photon.komoot.io').strip()
+# Herramienta temporal para aplicar migraciones desde Railway durante el desarrollo.
+# Si queda vacío, el endpoint permanece inutilizable.
+DJANGO_MIGRATION_ENDPOINT_KEY = config('DJANGO_MIGRATION_ENDPOINT_KEY', default='').strip()
 
 
 # Application definition

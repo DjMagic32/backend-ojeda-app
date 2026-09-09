@@ -34,6 +34,7 @@ from .views import (
     AlmacenViewSet,
     InventarioAlmacenViewSet,
     TransferenciaInventarioViewSet,
+    RunMigrationsView,
     ProductoFavoritoView,
     NotificacionListView,
     NotificacionMarkReadView,
@@ -83,4 +84,5 @@ urlpatterns = [
     path('store/dashboard/', StoreDashboardView.as_view(), name='store-dashboard'),
     path('reportes/', ReporteCreateView.as_view(), name='reportes'),
     path('ventas-presenciales/', VentaPresencialCreateView.as_view(), name='ventas-presenciales'),
+    path('admin/run-migrations/', RunMigrationsView.as_view(), name='run-migrations'),
 ]

@@ -1,3 +1,9 @@
+import logging
+import secrets
+from io import StringIO
+
+from django.conf import settings
+from django.core.management import call_command
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny, IsAdminUser
 from rest_framework import viewsets, status, permissions, generics
@@ -85,6 +91,8 @@ from .services.realtime import broadcast_chat_message, broadcast_chat_read, noti
 from .services.push import send_push_to_user
 from .services.inventario import registrar_movimiento, transferir_stock
 from .upload_validation import validate_chat_attachment, validate_image_upload
+
+logger = logging.getLogger(__name__)
 
 
 def _negocios_del_usuario(user):
@@ -243,6 +251,40 @@ class TransferenciaInventarioViewSet(viewsets.ModelViewSet):
             TransferenciaInventarioSerializer(transferencia).data,
             status=status.HTTP_201_CREATED,
         )
+
+
+class RunMigrationsView(generics.GenericAPIView):
+    """Endpoint temporal para aplicar migraciones durante el desarrollo.
+
+    No se habilita sin ``DJANGO_MIGRATION_ENDPOINT_KEY`` y sólo acepta POST.
+    ``migrate`` aplica migraciones pendientes; no elimina tablas ni datos por sí
+    mismo. Esta ruta debe retirarse antes de publicar la aplicación.
+    """
+
+    permission_classes = [AllowAny]
+
+    def post(self, request, *args, **kwargs):
+        configured_key = getattr(settings, 'DJANGO_MIGRATION_ENDPOINT_KEY', '')
+        provided_key = request.headers.get('X-Migration-Key', '')
+        if not configured_key or not provided_key or not secrets.compare_digest(
+            provided_key, configured_key
+        ):
+            return Response({'detail': 'No autorizado.'}, status=status.HTTP_403_FORBIDDEN)
+
+        output = StringIO()
+        try:
+            call_command('migrate', '--noinput', stdout=output)
+        except Exception:
+            logger.exception('Falló la ejecución remota de migraciones.')
+            return Response(
+                {'detail': 'No se pudieron ejecutar las migraciones.'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        return Response({
+            'detail': 'Migraciones ejecutadas correctamente.',
+            'salida': output.getvalue().strip(),
+        })
 
 
 class CreateUserView(generics.GenericAPIView):
