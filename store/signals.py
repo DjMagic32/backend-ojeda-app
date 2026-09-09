@@ -4,6 +4,7 @@ from django.dispatch import receiver
 from .models import (
     Carrito,
     DriverProfile,
+    InventarioAlmacen,
     MovimientoStock,
     Negocio,
     NegocioMiembro,
@@ -63,6 +64,33 @@ def crear_estructura_principal(sender, instance: Negocio, created, **kwargs):
         codigo='PRINCIPAL',
         defaults={'nombre': 'Almacén principal'},
     )
+
+
+@receiver(post_save, sender=ProductoTienda)
+def crear_existencia_inicial(sender, instance: ProductoTienda, created, **kwargs):
+    """Asocia el stock inicial de productos al almacén principal.
+
+    Los servicios y los productos sin control de stock no crean existencias.
+    """
+    if not created or instance.tipo == ProductoTienda.TIPO_SERVICIO or instance.stock is None:
+        return
+
+    almacen = (
+        Almacen.objects.filter(
+            sucursal__negocio__tienda_id=instance.tienda_id,
+            sucursal__activo=True,
+            activo=True,
+            codigo='PRINCIPAL',
+        )
+        .order_by('id')
+        .first()
+    )
+    if almacen is not None:
+        InventarioAlmacen.objects.get_or_create(
+            producto=instance,
+            almacen=almacen,
+            defaults={'cantidad': instance.stock},
+        )
 
 
 @receiver(post_save, sender=Notificacion)

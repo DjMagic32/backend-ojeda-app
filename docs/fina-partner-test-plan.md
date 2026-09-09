@@ -102,8 +102,18 @@ flujos actuales.
 - **App:** `[x]` pantalla de alta y desactivación accesible desde el perfil de la tienda.
 - **Operación:** `[ ]` ejecutar y probar la migración `0037_sucursal_almacen` en una base
   de datos de prueba/despliegue.
-- **Pendiente funcional:** `[ ]` asociar productos y movimientos a un almacén y probar
-  transferencias.
+- **Pendiente funcional:** `[~]` la asociación inicial ya está implementada en el siguiente
+  bloque; queda probarla y construir transferencias.
+
+### Estado de implementación del tercer bloque: inventario por almacén
+
+- **API:** `[~]` modelo `InventarioAlmacen`, migración `0038_inventario_almacen`, endpoint
+  protegido de consulta y asociación automática de ajustes/ventas al almacén principal.
+- **App:** `[~]` resumen de productos asociados por almacén e historial con ubicación del
+  movimiento; aún falta selector operativo y transferencias desde la app.
+- **Operación:** `[ ]` ejecutar `0038_inventario_almacen` en Railway y verificar la migración.
+- **Pruebas:** `[ ]` ejecutar los casos de inventario con dos almacenes, concurrencia,
+  servicios sin stock y compatibilidad con clientes antiguos.
 
 ## Pruebas de aislamiento y permisos
 

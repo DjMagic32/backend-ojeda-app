@@ -32,6 +32,7 @@ from .models import (
     ProductoFavorito,
     Notificacion,
     Reporte,
+    InventarioAlmacen,
     MovimientoStock,
     ArticuloUsado,
 )
@@ -724,15 +725,58 @@ class ReporteSerializer(serializers.ModelSerializer):
 
 
 class MovimientoStockSerializer(serializers.ModelSerializer):
+    almacen_nombre = serializers.CharField(source='almacen.nombre', read_only=True, allow_null=True)
+    sucursal_nombre = serializers.CharField(
+        source='almacen.sucursal.nombre', read_only=True, allow_null=True
+    )
+
     class Meta:
         model = MovimientoStock
-        fields = ['id', 'producto', 'tipo', 'cantidad', 'stock_resultante', 'origen', 'order', 'creado']
+        fields = [
+            'id',
+            'producto',
+            'almacen',
+            'almacen_nombre',
+            'sucursal_nombre',
+            'tipo',
+            'cantidad',
+            'stock_resultante',
+            'stock_almacen_resultante',
+            'origen',
+            'order',
+            'creado',
+        ]
+        read_only_fields = fields
+
+
+class InventarioAlmacenSerializer(serializers.ModelSerializer):
+    producto_nombre = serializers.CharField(source='producto.nombre', read_only=True)
+    producto_tipo = serializers.CharField(source='producto.tipo', read_only=True)
+    almacen_nombre = serializers.CharField(source='almacen.nombre', read_only=True)
+    sucursal_id = serializers.IntegerField(source='almacen.sucursal_id', read_only=True)
+    sucursal_nombre = serializers.CharField(source='almacen.sucursal.nombre', read_only=True)
+
+    class Meta:
+        model = InventarioAlmacen
+        fields = [
+            'id',
+            'producto',
+            'producto_nombre',
+            'producto_tipo',
+            'almacen',
+            'almacen_nombre',
+            'sucursal_id',
+            'sucursal_nombre',
+            'cantidad',
+            'actualizado',
+        ]
         read_only_fields = fields
 
 
 class AjusteStockSerializer(serializers.Serializer):
     delta = serializers.IntegerField(required=False)
     nuevo_stock = serializers.IntegerField(required=False, min_value=0)
+    almacen_id = serializers.IntegerField(required=False, allow_null=True, min_value=1)
     motivo = serializers.CharField(required=False, allow_blank=True)
 
     def validate(self, attrs):

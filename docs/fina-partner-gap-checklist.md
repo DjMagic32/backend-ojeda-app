@@ -48,6 +48,19 @@ ni como afirmación independiente de sus cifras comerciales.
 - **Alcance pendiente:** falta asignarla al inventario y transferir existencias; la pantalla
   actual no permite todavía renombrar registros existentes.
 
+### Avance del tercer paso
+
+- **API:** `[~]` se agregó `InventarioAlmacen`, la migración `0038_inventario_almacen`,
+  consulta protegida por negocio en `GET /api/store/inventario-almacenes/`, asociación del
+  stock existente al almacén principal y registro de movimientos con almacén. Las ventas y
+  ajustes antiguos siguen usando automáticamente el almacén principal cuando existe.
+- **App:** `[~]` la pantalla de sucursales y almacenes muestra cuántos productos están
+  asociados a cada almacén y el historial de stock muestra la sucursal/almacén del movimiento.
+  Todavía falta seleccionar el almacén explícitamente desde la operación y construir
+  transferencias.
+- **Operación:** `[ ]` falta ejecutar `0038_inventario_almacen` en Railway y validar los
+  datos reales antes de marcar el bloque como terminado.
+
 ## Conclusión ejecutiva
 
 Sí, podemos hacerlo, pero Fina Partner y TuPlaza parten de productos distintos:
@@ -89,8 +102,9 @@ ERP de una tienda ni exigirles configurar una tienda para vender en el marketpla
   de aislamiento a nivel de servicio y base de datos.
 - `[ ]` Evaluar Row-Level Security (RLS) de PostgreSQL cuando el módulo sea multiempresa;
   no conviene activarlo sin antes cerrar el modelo de pertenencia y las migraciones.
-- `[~]` Crear `Sucursal` y `Almacen`: ya existe la estructura principal en API y app; faltan
-  existencias separadas y transferencias entre ubicaciones.
+- `[~]` Crear `Sucursal` y `Almacen`: ya existe la estructura principal en API y app y el
+  inventario ya puede asociarse al almacén principal; faltan selección operativa completa y
+  transferencias entre ubicaciones.
 - `[x]` Definir qué permanece global de TuPlaza (marketplace, usuarios, delivery) y qué
   pertenece exclusivamente al negocio (ventas internas, compras, gastos y caja).
 
@@ -124,7 +138,9 @@ el negocio y la sucursal correspondiente.
   actuales.
 - `[~]` Reservas de inventario para órdenes online: existe el flujo de pedido, pero debemos
   definir una reserva con vencimiento para evitar vender dos veces la misma existencia.
-- `[ ]` Existencias por sucursal y almacén.
+- `[~]` Existencias por sucursal y almacén: existe el detalle transaccional, la migración del
+  stock legado, asociación automática al almacén principal y consulta protegida; falta la
+  operación completa por almacén desde la app.
 - `[ ]` Transferencias entre almacenes, recepción, mermas, devoluciones y conteos físicos.
 - `[ ]` Costo promedio ponderado calculado de forma transaccional.
 - `[ ]` Lotes, fechas de vencimiento, alertas y despacho FEFO para alimentos, farmacias y

@@ -413,6 +413,43 @@ class ProductoTienda(models.Model):
         return f"{self.nombre} - {self.tienda.nombre} ({self.tipo})"
 
 
+class InventarioAlmacen(models.Model):
+    """Existencia de un producto dentro de un almacén concreto.
+
+    ``ProductoTienda.stock`` se conserva como total agregado para no romper
+    clientes antiguos. Esta tabla es la fuente de detalle cuando el negocio
+    trabaja con sucursales y almacenes.
+    """
+
+    almacen = models.ForeignKey(
+        Almacen,
+        on_delete=models.CASCADE,
+        related_name='existencias',
+    )
+    producto = models.ForeignKey(
+        ProductoTienda,
+        on_delete=models.CASCADE,
+        related_name='existencias_almacen',
+    )
+    cantidad = models.PositiveIntegerField(default=0)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['almacen', 'producto'],
+                name='unique_existencia_producto_almacen',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['producto', 'almacen'], name='store_inv_product_wh_idx'),
+            models.Index(fields=['almacen', 'producto'], name='store_inv_wh_product_idx'),
+        ]
+
+    def __str__(self):
+        return f'{self.producto.nombre} · {self.almacen.nombre}: {self.cantidad}'
+
+
 class StoreOrder(models.Model):
     ESTADO_PENDIENTE = 'pending'
     ESTADO_EN_CURSO = 'ongoing'
@@ -1135,9 +1172,17 @@ class MovimientoStock(models.Model):
     ]
 
     producto = models.ForeignKey(ProductoTienda, on_delete=models.CASCADE, related_name='movimientos_stock')
+    almacen = models.ForeignKey(
+        Almacen,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='movimientos_stock',
+    )
     tipo = models.CharField(max_length=10, choices=TIPOS)
     cantidad = models.IntegerField(help_text='Delta con signo: las ventas son negativas.')
     stock_resultante = models.PositiveIntegerField(null=True, blank=True)
+    stock_almacen_resultante = models.PositiveIntegerField(null=True, blank=True)
     origen = models.CharField(max_length=20, choices=ORIGENES)
     order = models.ForeignKey(StoreOrder, on_delete=models.SET_NULL, null=True, blank=True, related_name='movimientos_stock')
     creado = models.DateTimeField(auto_now_add=True)

@@ -23,6 +23,7 @@ from .models import (
     Negocio,
     Sucursal,
     Almacen,
+    InventarioAlmacen,
     ProductoTienda,
     Comentario,
     ComentarioProducto,
@@ -69,6 +70,7 @@ from .serializers import (
     ProductoFavoritoSerializer,
     NotificacionSerializer,
     ReporteSerializer,
+    InventarioAlmacenSerializer,
     MovimientoStockSerializer,
     AjusteStockSerializer,
     VentaPresencialSerializer,
@@ -151,6 +153,28 @@ class AlmacenViewSet(viewsets.ModelViewSet):
             serializer.save()
         except IntegrityError as exc:
             raise ValidationError('Ya existe un almacén con ese código en la sucursal.') from exc
+
+
+class InventarioAlmacenViewSet(viewsets.ReadOnlyModelViewSet):
+    """Consulta protegida de existencias por almacén del negocio autenticado."""
+
+    serializer_class = InventarioAlmacenSerializer
+    permission_classes = [IsAuthenticated]
+    queryset = InventarioAlmacen.objects.select_related(
+        'producto', 'almacen', 'almacen__sucursal'
+    )
+
+    def get_queryset(self):
+        queryset = self.queryset.filter(
+            almacen__sucursal__negocio__in=_negocios_del_usuario(self.request.user)
+        )
+        producto_id = self.request.query_params.get('producto')
+        almacen_id = self.request.query_params.get('almacen')
+        if producto_id:
+            queryset = queryset.filter(producto_id=producto_id)
+        if almacen_id:
+            queryset = queryset.filter(almacen_id=almacen_id)
+        return queryset
 
 
 class CreateUserView(generics.GenericAPIView):
@@ -523,11 +547,36 @@ class ProductoTiendaViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
+        almacen = None
+        if data.get('almacen_id') is not None:
+            try:
+                almacen = Almacen.objects.select_related('sucursal__negocio').get(
+                    pk=data['almacen_id'],
+                    activo=True,
+                    sucursal__activo=True,
+                )
+            except Almacen.DoesNotExist as exc:
+                raise ValidationError('El almacén indicado no está disponible.') from exc
+            if almacen.sucursal.negocio.tienda_id != producto.tienda_id:
+                raise ValidationError('El almacén no pertenece a tu tienda.')
+
         if producto.tipo == ProductoTienda.TIPO_SERVICIO:
             raise ValidationError('Los servicios no manejan stock.')
 
+        stock_almacen = None
+        if almacen is not None:
+            stock_almacen = (
+                InventarioAlmacen.objects.filter(
+                    producto=producto,
+                    almacen=almacen,
+                )
+                .values_list('cantidad', flat=True)
+                .first()
+                or 0
+            )
+
         if 'nuevo_stock' in data:
-            actual = producto.stock or 0
+            actual = stock_almacen if almacen is not None else (producto.stock or 0)
             delta = data['nuevo_stock'] - actual
             if delta == 0 and producto.stock is not None:
                 return Response({'producto_id': producto.id, 'stock': producto.stock, 'movimiento': None})
@@ -544,7 +593,11 @@ class ProductoTiendaViewSet(viewsets.ModelViewSet):
 
         try:
             movimiento = registrar_movimiento(
-                producto, tipo, delta, MovimientoStock.ORIGEN_AJUSTE_MANUAL
+                producto,
+                tipo,
+                delta,
+                MovimientoStock.ORIGEN_AJUSTE_MANUAL,
+                almacen=almacen,
             )
         except DjangoValidationError as exc:
             raise ValidationError(exc.messages[0] if exc.messages else 'El stock no puede quedar negativo.')
