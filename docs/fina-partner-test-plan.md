@@ -105,6 +105,30 @@ flujos actuales.
 - **Pendiente funcional:** `[~]` la asociación inicial y la transferencia básica ya están
   implementadas; queda probarlas y completar recepción/controles avanzados.
 
+### Renombrado de sucursales y almacenes (2026-09-09)
+
+Implementado en `BusinessLocations`, accesible desde perfil de tienda → Sucursales →
+Editar nombre. Consume `PATCH /api/store/sucursales/{id}/` y
+`PATCH /api/store/almacenes/{id}/` con sólo `nombre`. No requiere migraciones.
+
+- `[x]` `python3 -m py_compile store/models.py store/serializers.py store/views.py store/urls.py`.
+- `[x]` `npx tsc --noEmit`: salida idéntica antes/después, 75 errores preexistentes,
+  ninguno nuevo en la pantalla modificada.
+- `[x]` Smoke de Railway: salud `200`, siete rutas administrativas `401` y ambos PATCH
+  con ID `0` y sin credenciales devuelven `401`. No acredita un guardado autenticado.
+- `[ ]` Android: renombrar una sucursal y un almacén; salir y volver a entrar para confirmar
+  persistencia. Comprobar también registros inactivos y nombres largos.
+- `[ ]` Cancelar y cerrar con Atrás sin guardar; el nombre debe conservarse.
+- `[ ]` Nombre vacío o sólo espacios no permite guardar; máximo 120 caracteres. Un error
+  de red o validación mantiene el formulario y permite reintentar; doble toque no duplica
+  solicitudes mientras se guarda.
+- `[ ]` Confirmar que códigos (incluido `PRINCIPAL`), estado activo, relaciones y saldos
+  siguen iguales; volver a caja, ajustes y transferencias y comprobar el nuevo nombre.
+- `[ ]` Verificar rechazo de PATCH autenticado sobre IDs de otro negocio.
+
+Estas comprobaciones funcionales quedan registradas para la validación del bloque;
+no son un requisito para continuar implementando los siguientes pendientes del checklist.
+
 ### Estado de implementación del tercer bloque: inventario y transferencias
 
 - **API:** `[~]` modelo `InventarioAlmacen`, migraciones `0038_inventario_almacen` y

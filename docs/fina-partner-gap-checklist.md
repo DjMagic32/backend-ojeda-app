@@ -43,12 +43,20 @@ ni como afirmación independiente de sus cifras comerciales.
   `GET /api/store/mi-negocio/`.
 - **App:** `[x]` el perfil de la tienda muestra el resumen y existe una pantalla para crear
   y desactivar sucursales y almacenes.
+- **Renombrado en app (2026-09-09):** `[~]` implementado “Editar nombre” para sucursales
+  y almacenes, incluidos registros inactivos. Permite cancelar, valida nombres de 1 a 120
+  caracteres, evita envíos simultáneos y conserva el formulario si la API rechaza el cambio.
+  Reutiliza los PATCH existentes enviando sólo `nombre`; conserva códigos, relaciones,
+  existencias e historial. Sin cambios de modelos ni nuevas migraciones.
+  Compilación Python correcta y TypeScript con los mismos 75 errores preexistentes.
+  Pendiente comprobar el guardado autenticado y la pantalla en Android.
 - **Operación:** `[x]` la migración `0037_sucursal_almacen` quedó aplicada en Railway junto
   con el resto de migraciones del proyecto; falta validar los datos reales con usuarios de
   prueba.
 - **Alcance pendiente:** la asociación al inventario y las transferencias básicas existen
-  en los pasos siguientes; falta validarlas con datos reales. La pantalla actual no permite
-  todavía renombrar registros existentes.
+  en los pasos siguientes; falta validarlas con datos reales. El renombrado ya está
+  implementado; su validación funcional se registra por separado y no bloquea el desarrollo
+  de los siguientes pendientes.
 
 ### Avance del tercer paso
 
