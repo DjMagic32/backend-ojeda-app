@@ -99,3 +99,21 @@ class VentasIdempotentesTests(unittest.TestCase):
         self.s.connection.introspection.table_names.return_value = []
         self.assertFalse(self.s.idempotencia_disponible())
         self.s.OperacionVentaPresencial.objects.get_or_create.assert_not_called()
+
+    def test_caja_utiliza_registro_de_operaciones_separado(self):
+        model = MagicMock()
+        model.objects.get_or_create.side_effect = self.get_or_create
+        model.objects.select_for_update.return_value.get.side_effect = lambda pk: next(row for row in self.rows.values() if row.pk == pk)
+        self.s.confirmar_operacion(1, 'clave', 'huella', self.create, modelo=model)
+        self.s.OperacionVentaPresencial.objects.get_or_create.assert_not_called()
+        self.assertEqual(self.s.cancelar_operacion(1, 'clave', modelo=model), self.create.return_value)
+
+    def test_huella_legacy_se_conserva_y_caja_incluye_sesion_y_medio(self):
+        import hashlib
+        items = [{'producto_id': 1, 'cantidad': 2}]
+        expected = hashlib.sha256(b'{"almacen_id":1,"items":[{"cantidad":2,"producto_id":1}],"notas":""}').hexdigest()
+        self.assertEqual(self.s.huella_venta(items, 1), expected)
+        fingerprint = self.s.huella_venta(items, 1, contexto={'sesion_id': 1, 'medio_pago': 'efectivo'})
+        self.assertNotEqual(fingerprint, expected)
+        self.assertNotEqual(fingerprint, self.s.huella_venta(items, 1, contexto={'sesion_id': 2, 'medio_pago': 'efectivo'}))
+        self.assertNotEqual(fingerprint, self.s.huella_venta(items, 1, contexto={'sesion_id': 1, 'medio_pago': 'zelle'}))

@@ -227,14 +227,40 @@ no se modificó inventario operativo y no se activaron reservas ni idempotencia.
 - **Compatibilidad:** la ruta anterior sigue funcionando para apps anteriores, sin garantía
   de idempotencia. La nueva app sólo usa la ruta protegida; comprueba disponibilidad y no
   degrada a cobro sin clave. Sin tabla nueva, las operaciones responden `503` sin escrituras.
-- **Migración:** `[~]` `0040_operacion_venta_presencial` preparada y revisada estáticamente:
+- **Migración:** `[x]` `0040_operacion_venta_presencial` revisada y aplicada:
   sólo crea `OperacionVentaPresencial`; no modifica datos, arranque ni tablas existentes.
   Guarda el ID de tienda y un comprobante JSON sin relaciones inversas para evitar cambios
   en consultas/borrados legados durante el despliegue. No hay limpieza automática de claves.
-  Aplicación en Railway aún no confirmada: requiere `migrate` en su entorno.
+  El endpoint autorizado de migraciones respondió `200` y “No migrations to apply” sobre
+  la revisión que incluye `0040`; no hubo migraciones adicionales que ejecutar.
 - **Verificación local:** `[x]` compilación Python, 53 pruebas locales de backend (10 nuevas
   de idempotencia) y 12 del almacenamiento/recuperación frontend. TypeScript conserva los
   75 errores preexistentes. Se añadieron 7 casos PostgreSQL, preparados pero no ejecutados.
+
+### Décimo paso: sesiones de caja y arqueo bimonetario (2026-09-09)
+
+- **API/app:** `[~]` apertura por almacén con fondos USD/VES, una sola sesión abierta por
+  ubicación, entradas/retiros con actor y motivo, cierre definitivo con contado, esperado
+  y diferencia separados por moneda. Historial paginado de sesiones y movimientos.
+  Acceso desde el perfil de tienda y desde Modo caja. Pendiente recorrido autenticado/Android.
+- **Ventas:** la nueva app requiere sesión abierta y un medio de pago por ticket. Efectivo
+  aumenta el saldo esperado; Pago Móvil, Zelle, tarjeta y transferencia se informan aparte.
+  La moneda del pago es la del ticket; no hay pagos mixtos, conversión ni cálculo de vuelto.
+  La venta, su movimiento de caja y su comprobante idempotente se confirman juntos.
+- **Concurrencia:** bloqueo de sesión compartido por ventas, movimientos y cierre; operación
+  idempotente antes del bloqueo de sesión/productos. El retiro no puede superar el efectivo
+  disponible en su moneda. Una venta confirmada sigue siendo recuperable tras cerrar caja.
+  Apertura/movimiento/cierre también guardan clave antes de enviar y permiten recuperar o
+  cancelar el intento sin duplicar efectos. Falta ejecutar las carreras reales en PostgreSQL.
+- **Compatibilidad:** `0041_sesiones_caja` sólo crea tres tablas nuevas; no altera datos ni
+  tablas existentes. Las ventas pendientes anteriores conservan su ruta y huella originales.
+  Las ventas de clientes anteriores sin sesión no se incorporan automáticamente al arqueo.
+  Las rutas nuevas responden `503` antes de tener sus tablas; no modifican el arranque.
+- **Verificación local:** `[x]` compilación Python, 68 pruebas de backend y 39 de frontend;
+  TypeScript conserva exactamente los 75 errores previos. Comparación estática de todos los
+  campos, opciones y restricciones de los modelos nuevos contra `0041`, sin diferencias.
+- **Despliegue/migración:** `[ ]` pendiente aplicar `0041` por el endpoint autorizado después
+  de desplegar este bloque. El aviso anterior de modelos sin migración sigue separado.
 
 ## Conclusión ejecutiva
 
@@ -341,15 +367,17 @@ el negocio y la sucursal correspondiente.
 - `[x]` Pedido online con items, estado, pago reportado/confirmado y comprobante.
 - `[~]` Dashboard de tienda y separación de canal online/presencial; falta convertirlo en
   cierre operativo de caja y reportes contables.
-- `[ ]` Sesión de caja: apertura, fondo inicial, movimientos, retiros, cierre y arqueo.
+- `[~]` Sesión de caja: apertura, fondo inicial, movimientos, retiros, cierre y arqueo
+  implementados en API/app por almacén, con USD/VES separados e idempotencia. Falta validación
+  funcional autenticada y concurrencia PostgreSQL.
 - `[ ]` Ticket/factura con numeración, devolución, anulación y nota de crédito.
 - `[ ]` Cotizaciones que puedan convertirse en venta sin volver a registrar los productos.
 - `[ ]` Cargos configurables: delivery, empaque, propina, comisión, descuento e impuestos.
 - `[ ]` Comandas, mesas y estados de cocina para restaurantes.
 - `[ ]` Venta omnicanal unificada: marketplace, POS, enlaces externos y venta manual.
 - `[~]` Idempotencia de ventas presenciales implementada en nueva API y Modo caja, incluida
-  recuperación tras respuesta perdida y cierre de app. Falta confirmar aplicación de `0040`
-  y validar concurrencia PostgreSQL/Android. Las versiones anteriores no obtienen esta garantía.
+  recuperación tras respuesta perdida y cierre de app. `0040` aplicada; falta validar
+  concurrencia PostgreSQL/Android. Las versiones anteriores sin clave no obtienen esta garantía.
 
 ## 5. Tesorería y operación bimonetaria
 

@@ -36,6 +36,7 @@ from .models import (
     MovimientoStock,
     TransferenciaInventario,
     ArticuloUsado,
+    MovimientoCaja,
 )
 from .upload_validation import validate_image_upload
 
@@ -864,6 +865,51 @@ class OperacionVentaPresencialSerializer(VentaPresencialSerializer):
         'invalid': 'La clave de la operación no es válida.',
         'null': 'Indica la clave de la operación.',
     })
+
+
+class VentaCajaSerializer(OperacionVentaPresencialSerializer):
+    sesion_caja_id = serializers.IntegerField(min_value=1)
+    almacen_id = serializers.IntegerField(min_value=1)
+    medio_pago = serializers.ChoiceField(choices=MovimientoCaja.MEDIOS)
+
+
+class OperacionCajaSerializer(serializers.Serializer):
+    clave_operacion = serializers.UUIDField()
+    accion = serializers.ChoiceField(choices=['abrir', 'entrada', 'retiro', 'cerrar'])
+    almacen_id = serializers.IntegerField(required=False, min_value=1)
+    sesion_id = serializers.IntegerField(required=False, min_value=1)
+    fondo_usd = serializers.DecimalField(max_digits=14, decimal_places=2, min_value=Decimal('0'), required=False)
+    fondo_ves = serializers.DecimalField(max_digits=14, decimal_places=2, min_value=Decimal('0'), required=False)
+    contado_usd = serializers.DecimalField(max_digits=14, decimal_places=2, min_value=Decimal('0'), required=False)
+    contado_ves = serializers.DecimalField(max_digits=14, decimal_places=2, min_value=Decimal('0'), required=False)
+    monto = serializers.DecimalField(max_digits=14, decimal_places=2, min_value=Decimal('0.01'), required=False)
+    moneda = serializers.ChoiceField(choices=['USD', 'VES'], required=False)
+    motivo = serializers.CharField(max_length=500, required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        requeridos = {
+            'abrir': ['almacen_id', 'fondo_usd', 'fondo_ves'],
+            'entrada': ['sesion_id', 'monto', 'moneda', 'motivo'],
+            'retiro': ['sesion_id', 'monto', 'moneda', 'motivo'],
+            'cerrar': ['sesion_id', 'contado_usd', 'contado_ves'],
+        }[attrs['accion']]
+        if any(campo not in attrs for campo in requeridos):
+            raise serializers.ValidationError('Completa todos los datos de la operación.')
+        if attrs['accion'] in ('entrada', 'retiro') and not attrs['motivo'].strip():
+            raise serializers.ValidationError('Indica el motivo de la entrada o retiro.')
+        permitidos = set(requeridos) | {'accion', 'clave_operacion'}
+        if attrs['accion'] == 'cerrar':
+            permitidos.add('motivo')
+        if set(attrs) - permitidos:
+            raise serializers.ValidationError('La operación contiene campos que no le corresponden.')
+        return attrs
+
+
+class MovimientoCajaSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MovimientoCaja
+        fields = ['id', 'sesion', 'tipo', 'moneda', 'monto', 'medio_pago', 'motivo', 'usuario_id', 'order_id', 'creado']
+        read_only_fields = fields
 
 
 class ArticuloUsadoVendedorSerializer(serializers.ModelSerializer):

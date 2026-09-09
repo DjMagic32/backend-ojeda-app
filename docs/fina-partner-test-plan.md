@@ -392,8 +392,8 @@ Validación funcional pendiente, sin bloquear los siguientes desarrollos:
 
 ## Ventas idempotentes y recuperación de caja (2026-09-09)
 
-Estado: implementación lista para desplegar; activación de la migración y pruebas reales
-pendientes. No se han reactivado reservas ni implementado sesiones de apertura/cierre.
+Estado: `0040` aplicada; pruebas reales pendientes. Las reservas no se han reactivado.
+Las sesiones de apertura/cierre se describen en el bloque siguiente.
 
 ### Contrato
 
@@ -418,9 +418,10 @@ pendientes. No se han reactivado reservas ni implementado sesiones de apertura/c
 
 ### Activación en Railway
 
-`start.sh` sólo ejecuta migraciones con `AUTO_MIGRATE=1`. La sesión de desarrollo no tiene
-CLI/conector ni credenciales de administración de Railway; no se ha ejecutado `manage.py`
-localmente y no se afirma que `0040` esté aplicada. No es necesario cambiar el arranque.
+`start.sh` sólo ejecuta migraciones con `AUTO_MIGRATE=1`. El usuario autorizó el endpoint
+`POST /api/store/admin/run-migrations/` con su cabecera administrativa. Respondió `200` y
+“No migrations to apply” sobre la revisión que contiene `0040`: ya estaba aplicada.
+No se guardó la clave en archivos ni se ejecutó `manage.py` localmente. No cambia el arranque.
 
 En la consola del servicio backend desplegado, revisar primero:
 
@@ -453,7 +454,8 @@ No revertir/borrar la tabla una vez que contenga comprobantes o cancelaciones pe
   respuesta perdida/reinicio, fallo al guardar comprobante, cancelación, inicios simultáneos,
   separación por cuenta/servidor, falta de migración y almacenamiento corrupto.
 - `[x]` `npx tsc --noEmit`: mismos 75 errores preexistentes, sin errores nuevos.
-- `[ ]` Aplicar `0040` en Railway y verificar disponibilidad autenticada.
+- `[x]` Confirmar `0040` aplicada en Railway mediante el endpoint de migraciones autorizado.
+- `[ ]` Verificar disponibilidad y recuperación con una sesión real de tienda.
 - `[ ]` Ejecutar los 7 nuevos casos de `store.test_inventario_integration` en PostgreSQL
   dedicado: dos POST simultáneos con la misma clave; POST/cancelación concurrentes; respuesta
   original con stock agotado/precio cambiado; conflicto de payload; rollback completo;
@@ -474,6 +476,69 @@ operación** sólo cancela intentos que no se hayan confirmado; una venta confir
 con su comprobante. No borrar los datos de la app ni crear otra venta desde otro dispositivo
 para resolver una operación desconocida. El alcance es una misma clave, no dos tickets
 independientes ni recuperación después de desinstalar/borrar almacenamiento local.
+
+## Sesiones de caja, movimientos y cierres (2026-09-09)
+
+Implementado: **Perfil de tienda → Sesiones de caja**, también accesible desde **Modo caja →
+Abrir o gestionar caja**. Una sesión abierta por almacén. Fondos y conteos no negativos,
+entradas/retiros positivos con motivo obligatorio, importes con máximo dos decimales.
+Sólo el dueño de la tienda accede; permisos de empleados siguen pendientes.
+
+### Contrato y saldos
+
+- `GET /api/store/cajas/sesiones/`: 20 sesiones por página; filtros `almacen_id`,
+  `abierta=1|0` y `antes_de`; devuelve `results` y `siguiente_antes_de` (null al terminar).
+- `GET /api/store/cajas/sesiones/{id}/`: resumen, `movimientos` (50 por página) y
+  `siguiente_antes_de`; continuar con `antes_de`. Incluye actor, motivo, moneda y venta.
+- `POST /api/store/cajas/operaciones/`: UUID `clave_operacion` y `accion`:
+  `abrir` requiere `almacen_id`, `fondo_usd`, `fondo_ves`; `entrada`/`retiro` requieren
+  `sesion_id`, `moneda`, `monto`, `motivo`; `cerrar` requiere `sesion_id`, `contado_usd`,
+  `contado_ves`, con `motivo` opcional. `201` original, `200` repetida; otro payload con la
+  misma clave devuelve `409`. No se puede editar/reabrir una sesión cerrada.
+- `POST /api/store/cajas/operaciones/{uuid}/cancelar/`: devuelve resultado original si la
+  operación terminó, o guarda cancelación definitiva que bloquea una petición atrasada.
+  La app conserva operación/comprobante hasta recuperarlo, cancelarlo o pulsar “Continuar”.
+- `POST /api/store/cajas/ventas/`: contrato idempotente de venta más `sesion_caja_id`,
+  `almacen_id` y `medio_pago` obligatorios. Medio: efectivo, pago_movil, zelle, tarjeta o
+  transferencia. Una sesión cerrada/ajena u otro almacén impiden una venta nueva.
+  `GET` devuelve disponibilidad de esta variante; nunca se degrada a venta sin sesión.
+- Efectivo esperado por moneda = fondo + ventas en efectivo + entradas − retiros.
+  Otros medios se totalizan por moneda y medio, sin aumentar efectivo. El cierre almacena
+  contado, esperado y diferencia (contado − esperado), además de fecha, actor y nota.
+  La app no calcula saldos contables. Un ticket se cobra entero en su moneda y un solo medio.
+- El bloqueo de sesión se comparte con ventas y cierre. El movimiento de caja usa el total
+  calculado por el backend; venta, inventario, movimiento y comprobante están en la misma
+  transacción. El replay ocurre antes de validar caja/stock actuales.
+- Operaciones sin sesión de versiones anteriores conservan su comportamiento, pero no forman
+  parte del arqueo. No se convierten retrospectivamente ni se infieren medios de pago.
+
+### Evidencia y activación
+
+- `[x]` `python3 -m py_compile` y 68 pruebas locales de backend con dobles de ORM; incluyen
+  separación de medios/monedas, precisión decimal, retiros, cierres, sesión ajena/cerrada,
+  asociación de venta y conservación de huella antigua. No ejecutan SQL concurrente.
+- `[x]` `node --test scripts/cash.test.cjs scripts/pending-sale.test.cjs scripts/inventory.test.cjs scripts/stock-history.test.cjs`:
+  39 pruebas correctas, incluidas persistencia, recuperación, cancelación, montos, rutas y
+  conservación de sesión/medio de pago al reintentar una venta.
+- `[x]` `npx tsc --noEmit`: salida idéntica antes/después, 75 errores preexistentes.
+- `[x]` `0041_sesiones_caja` comparada estáticamente con modelos: tres `CreateModel`, campos,
+  opciones y restricciones equivalentes. Depende de `0040`; no altera tablas anteriores.
+- `[ ]` Aplicar `0041` por el endpoint autorizado tras confirmar el despliegue.
+- `[ ]` Ejecutar los 7 nuevos casos PostgreSQL (suite total: 29): apertura concurrente,
+  cierre frente a venta, replay tras cierre y conflicto de medio, retiros/conteos, aislamiento,
+  validación y cancelación de apertura. Preparados, sin ejecutar localmente por CONVENTIONS.md.
+- `[ ]` Android: abrir con USD 20/VES 100, vender USD 2,50 en efectivo y USD 2,50 por Zelle;
+  esperado USD 22,50/VES 100, Zelle separado. Retirar USD 5 y cerrar contando USD 17/VES 100:
+  diferencia USD −0,50/VES 0. Confirmar en el historial de cierres.
+- `[ ]` Cortar conexión y cerrar app durante apertura, retiro o cierre: recuperar mismo
+  resultado sin duplicar. Cancelar intenta detener sólo operaciones que aún no terminaron.
+- `[ ]` Cambiar almacén con red lenta; no usar sesión/saldo de la ubicación anterior.
+  Consultar cierres antiguos y más de 50 movimientos. Cerrar también una caja cuyo almacén
+  se desactivó después de abrirla; no permitir abrir otra en ese almacén inactivo.
+
+El aviso anterior de modelos sin migración sigue pendiente de diagnóstico completo; esta
+migración no corrige ni modifica esas diferencias. No borrar operaciones ni sesiones para
+resolver reintentos: se perdería la trazabilidad y protección frente a solicitudes atrasadas.
 
 ## Pruebas de aislamiento y permisos
 

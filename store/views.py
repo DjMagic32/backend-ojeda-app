@@ -1,5 +1,6 @@
 import logging
 import json
+import hashlib
 import secrets
 from io import StringIO
 
@@ -89,6 +90,9 @@ from .serializers import (
     VentaPresencialSerializer,
     OperacionVentaPresencialSerializer,
     ArticuloUsadoSerializer,
+    VentaCajaSerializer,
+    OperacionCajaSerializer,
+    MovimientoCajaSerializer,
 )
 from .models import MovimientoStock, StoreOrderItem, ArticuloUsado
 from .permissions import EsTienda
@@ -101,6 +105,8 @@ from .services.ventas_idempotentes import (
     cancelar_operacion, confirmar_operacion, huella_venta,
     idempotencia_disponible, ConflictoOperacion,
 )
+from .models import SesionCaja, OperacionCaja
+from .services.caja import caja_disponible, ejecutar_operacion_caja, registrar_venta_en_caja, resumen_caja
 from .upload_validation import validate_chat_attachment, validate_image_upload
 
 logger = logging.getLogger(__name__)
@@ -765,6 +771,15 @@ class OperacionVentaPresencialView(generics.GenericAPIView):
     permission_classes = [IsAuthenticated, EsTienda]
     serializer_class = OperacionVentaPresencialSerializer
 
+    def _disponible(self):
+        return idempotencia_disponible()
+
+    def _contexto(self, data):
+        return None
+
+    def _registrar(self, tienda, usuario, data):
+        return registrar_venta_presencial(tienda, usuario, data['items'], data.get('almacen_id'), data.get('notas', ''))
+
     def _tienda(self):
         try:
             return Tienda.objects.get(usuario=self.request.user)
@@ -775,11 +790,11 @@ class OperacionVentaPresencialView(generics.GenericAPIView):
         if clave is not None:
             return Response({'detail': 'Usa POST para cancelar la operación.'}, status=405)
         self._tienda()
-        return Response({'version': 1, 'idempotencia_disponible': idempotencia_disponible()})
+        return Response({'version': 1, 'idempotencia_disponible': self._disponible()})
 
     def post(self, request, clave=None):
         tienda = self._tienda()
-        if not idempotencia_disponible():
+        if not self._disponible():
             return Response({'detail': 'La protección de ventas aún no está disponible. Inténtalo más tarde.'}, status=503)
         if clave is not None:
             resultado = cancelar_operacion(tienda.pk, clave)
@@ -792,15 +807,15 @@ class OperacionVentaPresencialView(generics.GenericAPIView):
                 'items': 'Indica al menos un producto y cantidades enteras mayores que cero.',
                 'almacen_id': 'El almacén de la operación no es válido.',
                 'notas': 'Las notas de la operación no son válidas.',
+                'sesion_caja_id': 'Selecciona una sesión de caja válida.',
+                'medio_pago': 'Selecciona un medio de pago válido.',
             }
             campo = next(iter(serializer.errors))
             return Response({'detail': mensajes.get(campo, 'Revisa los datos de la operación.')}, status=400)
         data = serializer.validated_data
 
         def crear_venta():
-            order, movimientos = registrar_venta_presencial(
-                tienda, request.user, data['items'], data.get('almacen_id'), data.get('notas', ''),
-            )
+            order, movimientos = self._registrar(tienda, request.user, data)
             # Guarda JSON serializado, no referencias a precios/productos mutables.
             return json.loads(JSONRenderer().render({
                 'order': StoreOrderSerializer(order, context={'request': request}).data,
@@ -810,7 +825,7 @@ class OperacionVentaPresencialView(generics.GenericAPIView):
         try:
             resultado, repetida = confirmar_operacion(
                 tienda.pk, data['clave_operacion'],
-                huella_venta(data['items'], data.get('almacen_id'), data.get('notas', '')),
+                huella_venta(data['items'], data.get('almacen_id'), data.get('notas', ''), self._contexto(data)),
                 crear_venta,
             )
         except ConflictoOperacion as exc:
@@ -819,6 +834,83 @@ class OperacionVentaPresencialView(generics.GenericAPIView):
             return Response({'detail': exc.messages[0] if exc.messages else 'No se pudo registrar la venta.'}, status=400)
         return Response({**resultado, 'clave_operacion': str(data['clave_operacion']),
                          'repetida': repetida}, status=200 if repetida else 201)
+
+
+class VentaCajaView(OperacionVentaPresencialView):
+    serializer_class = VentaCajaSerializer
+
+    def _disponible(self):
+        return idempotencia_disponible() and caja_disponible()
+
+    def _contexto(self, data):
+        return {'sesion_id': data['sesion_caja_id'], 'medio_pago': data['medio_pago']}
+
+    def _registrar(self, tienda, usuario, data):
+        return registrar_venta_en_caja(tienda, usuario, data)
+
+
+class CajaView(OperacionVentaPresencialView):
+    serializer_class = OperacionCajaSerializer
+
+    def get(self, request, pk=None, **kwargs):
+        tienda = self._tienda()
+        if not caja_disponible():
+            return Response({'detail': 'Las sesiones de caja aún no están disponibles.'}, status=503)
+        filtros = {}
+        for nombre in ('antes_de', 'almacen_id'):
+            if nombre in request.query_params:
+                valor = request.query_params[nombre]
+                if not valor.isascii() or not valor.isdecimal() or len(valor) > 19 or not 0 < int(valor) <= 9223372036854775807:
+                    return Response({'detail': 'El filtro de caja no es válido.'}, status=400)
+                filtros[nombre] = int(valor)
+        sesiones = SesionCaja.objects.filter(tienda_id=tienda.pk)
+        if pk is not None:
+            if not 0 < pk <= 9223372036854775807:
+                return Response({'detail': 'La sesión de caja no está disponible.'}, status=404)
+            sesion = sesiones.filter(pk=pk).first()
+            if sesion is None:
+                return Response({'detail': 'La sesión de caja no está disponible.'}, status=404)
+            movimientos = sesion.movimientos.all()
+            if 'antes_de' in filtros:
+                movimientos = movimientos.filter(id__lt=filtros['antes_de'])
+            filas = list(movimientos.order_by('-id')[:51])
+            return Response({'sesion': resumen_caja(sesion),
+                             'movimientos': MovimientoCajaSerializer(filas[:50], many=True).data,
+                             'siguiente_antes_de': filas[49].pk if len(filas) > 50 else None})
+        if 'almacen_id' in filtros:
+            sesiones = sesiones.filter(almacen_id=filtros['almacen_id'])
+        if 'antes_de' in filtros:
+            sesiones = sesiones.filter(id__lt=filtros['antes_de'])
+        if 'abierta' in request.query_params:
+            if request.query_params['abierta'] not in ('0', '1'):
+                return Response({'detail': 'El estado de caja no es válido.'}, status=400)
+            sesiones = sesiones.filter(abierta=request.query_params['abierta'] == '1')
+        filas = list(sesiones.order_by('-id')[:21])
+        return Response({'results': [resumen_caja(sesion) for sesion in filas[:20]],
+                         'siguiente_antes_de': filas[19].pk if len(filas) > 20 else None})
+
+    def post(self, request, clave=None, **kwargs):
+        tienda = self._tienda()
+        if not caja_disponible():
+            return Response({'detail': 'Las sesiones de caja aún no están disponibles.'}, status=503)
+        if clave is not None:
+            resultado = cancelar_operacion(tienda.pk, clave, modelo=OperacionCaja)
+            return Response({'clave_operacion': str(clave), 'cancelada': resultado is None, 'resultado': resultado})
+        serializer = self.get_serializer(data=request.data)
+        if not serializer.is_valid():
+            return Response({'detail': 'Revisa los datos: montos no negativos con máximo dos decimales, moneda y motivo. Completa los campos de la operación.'}, status=400)
+        datos = serializer.validated_data
+        huella = hashlib.sha256(json.dumps({k: v for k, v in datos.items() if k != 'clave_operacion'},
+                                           sort_keys=True, default=str).encode()).hexdigest()
+        try:
+            resultado, repetida = confirmar_operacion(tienda.pk, datos['clave_operacion'], huella,
+                lambda: ejecutar_operacion_caja(tienda, request.user, datos), modelo=OperacionCaja)
+        except (ConflictoOperacion, DjangoValidationError) as exc:
+            mensaje = exc.messages[0] if isinstance(exc, DjangoValidationError) else str(exc)
+            return Response({'detail': mensaje}, status=409 if isinstance(exc, ConflictoOperacion) else 400)
+        except IntegrityError:
+            return Response({'detail': 'Ya existe una sesión abierta para ese almacén. Actualiza las cajas.'}, status=409)
+        return Response({**resultado, 'clave_operacion': str(datos['clave_operacion']), 'repetida': repetida}, status=200 if repetida else 201)
 
 
 class StoreOrderViewSet(viewsets.ModelViewSet):

@@ -42,6 +42,8 @@ from .views import (
     ReporteCreateView,
     VentaPresencialCreateView,
     OperacionVentaPresencialView,
+    CajaView,
+    VentaCajaView,
     ArticuloUsadoViewSet,
 )
 
@@ -86,6 +88,11 @@ urlpatterns = [
     path('reportes/', ReporteCreateView.as_view(), name='reportes'),
     path('ventas-presenciales/', VentaPresencialCreateView.as_view(), name='ventas-presenciales'),
     path('ventas-presenciales/operaciones/', OperacionVentaPresencialView.as_view(), name='operaciones-venta'),
+    path('cajas/ventas/', VentaCajaView.as_view(), name='ventas-caja'),
+    path('cajas/sesiones/', CajaView.as_view(http_method_names=['get', 'head', 'options']), name='sesiones-caja'),
+    path('cajas/sesiones/<int:pk>/', CajaView.as_view(http_method_names=['get', 'head', 'options']), name='detalle-caja'),
+    path('cajas/operaciones/', CajaView.as_view(http_method_names=['post', 'options']), name='operaciones-caja'),
+    path('cajas/operaciones/<uuid:clave>/cancelar/', CajaView.as_view(http_method_names=['post', 'options']), name='cancelar-operacion-caja'),
     path('ventas-presenciales/operaciones/<uuid:clave>/cancelar/', OperacionVentaPresencialView.as_view(), name='cancelar-operacion-venta'),
     path('admin/run-migrations/', RunMigrationsView.as_view(), name='run-migrations'),
 ]

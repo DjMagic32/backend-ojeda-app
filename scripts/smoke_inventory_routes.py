@@ -28,6 +28,12 @@ def main():
         ('POST', '/api/store/ventas-presenciales/operaciones/', 401),
         ('POST', '/api/store/ventas-presenciales/operaciones/00000000-0000-4000-8000-000000000000/cancelar/', 401),
         ('POST', '/api/store/productos-tienda/0/ajustar-stock/', 401),
+        ('GET', '/api/store/cajas/sesiones/', 401),
+        ('GET', '/api/store/cajas/sesiones/0/', 401),
+        ('GET', '/api/store/cajas/ventas/', 401),
+        ('POST', '/api/store/cajas/ventas/', 401),
+        ('POST', '/api/store/cajas/operaciones/', 401),
+        ('POST', '/api/store/cajas/operaciones/00000000-0000-4000-8000-000000000000/cancelar/', 401),
     ]
     for method, path, expected in cases:
         request = Request(base + path, method=method,

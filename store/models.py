@@ -554,6 +554,62 @@ class OperacionVentaPresencial(models.Model):
         )]
 
 
+class SesionCaja(models.Model):
+    tienda_id = models.PositiveBigIntegerField()
+    almacen_id = models.PositiveBigIntegerField()
+    almacen_nombre = models.CharField(max_length=120)
+    sucursal_nombre = models.CharField(max_length=120)
+    abierta = models.BooleanField(default=True)
+    fondo_usd = models.DecimalField(max_digits=20, decimal_places=2, default=0)
+    fondo_ves = models.DecimalField(max_digits=20, decimal_places=2, default=0)
+    contado_usd = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True)
+    contado_ves = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True)
+    esperado_usd = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True)
+    esperado_ves = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True)
+    abierto_por = models.PositiveBigIntegerField()
+    cerrado_por = models.PositiveBigIntegerField(null=True, blank=True)
+    notas_cierre = models.TextField(blank=True, default='')
+    abierto = models.DateTimeField(auto_now_add=True)
+    cerrado = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-id']
+        constraints = [models.UniqueConstraint(
+            fields=['tienda_id', 'almacen_id'], condition=models.Q(abierta=True),
+            name='unique_caja_abierta_almacen',
+        )]
+        indexes = [models.Index(fields=['tienda_id', '-id'], name='store_caja_tienda_idx')]
+
+
+class MovimientoCaja(models.Model):
+    MEDIOS = [('efectivo', 'Efectivo'), ('pago_movil', 'Pago móvil'), ('zelle', 'Zelle'),
+              ('tarjeta', 'Tarjeta'), ('transferencia', 'Transferencia')]
+    sesion = models.ForeignKey(SesionCaja, on_delete=models.PROTECT, related_name='movimientos')
+    tipo = models.CharField(max_length=10, choices=[('venta', 'Venta'), ('entrada', 'Entrada'), ('retiro', 'Retiro')])
+    moneda = models.CharField(max_length=3, choices=MONEDAS)
+    monto = models.DecimalField(max_digits=20, decimal_places=2)
+    medio_pago = models.CharField(max_length=20, choices=MEDIOS, default='efectivo')
+    motivo = models.TextField(blank=True, default='')
+    usuario_id = models.PositiveBigIntegerField()
+    order_id = models.PositiveBigIntegerField(unique=True, null=True, blank=True)
+    creado = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-id']
+
+
+class OperacionCaja(models.Model):
+    tienda_id = models.PositiveBigIntegerField()
+    clave = models.UUIDField()
+    huella = models.CharField(max_length=64, blank=True, default='')
+    respuesta = models.JSONField(null=True, blank=True)
+    cancelada = models.BooleanField(default=False)
+    creado = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['tienda_id', 'clave'], name='unique_operacion_caja_tienda')]
+
+
 class StoreOrderItem(models.Model):
     order = models.ForeignKey(StoreOrder, on_delete=models.CASCADE, related_name='items')
     producto = models.ForeignKey(ProductoTienda, on_delete=models.CASCADE, related_name='order_items')

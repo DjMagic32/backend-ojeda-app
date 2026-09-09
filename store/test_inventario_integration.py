@@ -20,6 +20,7 @@ from store.models import (
     Almacen, InventarioAlmacen, MovimientoStock, NegocioMiembro, ProductoTienda,
     StoreOrder, StoreOrderItem, Tienda, TransferenciaInventario, Usuario,
     OperacionVentaPresencial,
+    SesionCaja, MovimientoCaja, OperacionCaja,
 )
 from store.services.inventario import transferir_stock
 
@@ -75,6 +76,93 @@ class InventarioPostgresTests(TransactionTestCase):
 
     def adjustment_url(self):
         return f'/api/store/productos-tienda/{self.product.pk}/ajustar-stock/'
+
+    def open_cash(self):
+        response = self.client_a.post('/api/store/cajas/operaciones/', {
+            'clave_operacion': str(uuid4()), 'accion': 'abrir', 'almacen_id': self.a1.pk,
+            'fondo_usd': '20.00', 'fondo_ves': '100.00',
+        }, format='json')
+        self.assertEqual(response.status_code, 201, response.data)
+        return response.data['sesion']['id']
+
+    def test_caja_separa_efectivo_de_otros_pagos_y_monedas(self):
+        session_id = self.open_cash()
+        for method in ('efectivo', 'zelle'):
+            response = self.client_a.post('/api/store/cajas/ventas/', {
+                **self.sale_payload(), 'clave_operacion': str(uuid4()),
+                'sesion_caja_id': session_id, 'medio_pago': method,
+            }, format='json')
+            self.assertEqual(response.status_code, 201, response.data)
+        response = self.client_a.get(f'/api/store/cajas/sesiones/{session_id}/')
+        self.assertEqual(response.data['sesion']['esperado'], {'USD': '22.50', 'VES': '100.00'})
+        self.assertEqual(response.data['sesion']['ventas_por_medio']['USD']['zelle'], '2.50')
+
+    def test_caja_movimiento_repetido_y_cierre_con_diferencia(self):
+        session_id = self.open_cash()
+        payload = {'accion': 'retiro', 'clave_operacion': str(uuid4()), 'sesion_id': session_id,
+                   'moneda': 'USD', 'monto': '5.00', 'motivo': 'Depósito'}
+        for expected in (201, 200):
+            response = self.client_a.post('/api/store/cajas/operaciones/', payload, format='json')
+            self.assertEqual(response.status_code, expected, response.data)
+        self.assertEqual(MovimientoCaja.objects.filter(sesion_id=session_id).count(), 1)
+        close = self.client_a.post('/api/store/cajas/operaciones/', {'accion': 'cerrar',
+            'clave_operacion': str(uuid4()), 'sesion_id': session_id, 'contado_usd': '14.00', 'contado_ves': '100.00'}, format='json')
+        self.assertEqual(close.status_code, 201, close.data)
+        self.assertEqual(close.data['sesion']['diferencia'], {'USD': '-1.00', 'VES': '0.00'})
+
+    def test_dos_aperturas_concurrentes_solo_crean_una_sesion(self):
+        payload = {'accion': 'abrir', 'almacen_id': self.a1.pk, 'fondo_usd': '0.00', 'fondo_ves': '0.00'}
+        statuses = self.concurrent_posts([('/api/store/cajas/operaciones/', {**payload, 'clave_operacion': str(uuid4())}) for _ in range(2)])
+        self.assertEqual(sorted(statuses), [201, 400])
+        self.assertEqual(SesionCaja.objects.filter(abierta=True).count(), 1)
+
+    def test_cierre_concurrente_con_venta_no_pierde_ingreso(self):
+        session_id = self.open_cash()
+        statuses = self.concurrent_posts([
+            ('/api/store/cajas/ventas/', {**self.sale_payload(), 'clave_operacion': str(uuid4()),
+                'sesion_caja_id': session_id, 'medio_pago': 'efectivo'}),
+            ('/api/store/cajas/operaciones/', {'accion': 'cerrar', 'clave_operacion': str(uuid4()),
+                'sesion_id': session_id, 'contado_usd': '20.00', 'contado_ves': '100.00'}),
+        ])
+        self.assertEqual(statuses[1], 201)
+        self.assertIn(statuses[0], (201, 400))
+        session = SesionCaja.objects.get(pk=session_id)
+        self.assertFalse(session.abierta)
+        self.assertEqual(str(session.esperado_usd), '22.50' if statuses[0] == 201 else '20.00')
+        self.assertEqual(MovimientoCaja.objects.filter(sesion=session).count(), 1 if statuses[0] == 201 else 0)
+
+    def test_reintento_de_venta_recupera_tras_cierre_y_rechaza_otro_medio(self):
+        session_id = self.open_cash()
+        payload = {**self.sale_payload(), 'clave_operacion': str(uuid4()), 'sesion_caja_id': session_id, 'medio_pago': 'efectivo'}
+        first = self.client_a.post('/api/store/cajas/ventas/', payload, format='json')
+        self.assertEqual(first.status_code, 201, first.data)
+        self.client_a.post('/api/store/cajas/operaciones/', {'accion': 'cerrar', 'clave_operacion': str(uuid4()),
+            'sesion_id': session_id, 'contado_usd': '22.50', 'contado_ves': '100.00'}, format='json')
+        retry = self.client_a.post('/api/store/cajas/ventas/', payload, format='json')
+        self.assertEqual(retry.status_code, 200, retry.data)
+        self.assertEqual(first.data['order'], retry.data['order'])
+        self.assertEqual(self.client_a.post('/api/store/cajas/ventas/', {**payload, 'medio_pago': 'zelle'}, format='json').status_code, 409)
+        self.assertEqual(self.balance(self.a1), 9)
+
+    def test_caja_permisos_retiro_excesivo_y_validaciones(self):
+        session_id = self.open_cash()
+        self.assertEqual(self.client_b.get(f'/api/store/cajas/sesiones/{session_id}/').status_code, 404)
+        payload = {'accion': 'retiro', 'sesion_id': session_id, 'moneda': 'USD', 'motivo': 'Retiro'}
+        for amount in ('21.00', '-1', '0', '1.001', 'NaN'):
+            response = self.client_a.post('/api/store/cajas/operaciones/', {**payload, 'monto': amount, 'clave_operacion': str(uuid4())}, format='json')
+            self.assertEqual(response.status_code, 400, response.data)
+        response = self.client_b.post('/api/store/cajas/operaciones/', {**payload, 'monto': '1.00', 'clave_operacion': str(uuid4())}, format='json')
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual(MovimientoCaja.objects.count(), 0)
+
+    def test_cancelacion_de_apertura_impide_solicitud_atrasada(self):
+        clave = str(uuid4())
+        cancel = self.client_a.post(f'/api/store/cajas/operaciones/{clave}/cancelar/', {}, format='json')
+        self.assertTrue(cancel.data['cancelada'])
+        response = self.client_a.post('/api/store/cajas/operaciones/', {'accion': 'abrir', 'clave_operacion': clave,
+            'almacen_id': self.a1.pk, 'fondo_usd': '0', 'fondo_ves': '0'}, format='json')
+        self.assertEqual(response.status_code, 409)
+        self.assertFalse(SesionCaja.objects.exists())
 
     def test_venta_usa_almacen_y_conserva_otro_saldo(self):
         transferir_stock(self.product, self.a1, self.a2, 4, self.owner_a)
