@@ -90,6 +90,7 @@ from .permissions import EsTienda
 from .services.realtime import broadcast_chat_message, broadcast_chat_read, notify_user
 from .services.push import send_push_to_user
 from .services.inventario import registrar_movimiento, transferir_stock
+from .services.ventas import registrar_venta_presencial
 from .upload_validation import validate_chat_attachment, validate_image_upload
 
 logger = logging.getLogger(__name__)
@@ -718,74 +719,19 @@ class VentaPresencialCreateView(generics.GenericAPIView):
         except Tienda.DoesNotExist:
             raise ValidationError('El usuario autenticado no tiene una tienda asociada.')
 
-        almacen = None
-        if data.get('almacen_id') is not None:
-            try:
-                almacen = Almacen.objects.select_related('sucursal__negocio').get(
-                    pk=data['almacen_id'],
-                    activo=True,
-                    sucursal__activo=True,
-                )
-            except Almacen.DoesNotExist as exc:
-                raise ValidationError('El almacén indicado no está disponible.') from exc
-            if almacen.sucursal.negocio.tienda_id != tienda.id:
-                raise ValidationError('El almacén no pertenece a tu tienda.')
-
-        producto_ids = [item['producto_id'] for item in data['items']]
-        productos = {
-            p.id: p
-            for p in ProductoTienda.objects.filter(id__in=producto_ids, tienda=tienda)
-        }
-        faltantes = [pid for pid in producto_ids if pid not in productos]
-        if faltantes:
-            raise ValidationError('Algunos productos no pertenecen a tu tienda o no existen.')
-
-        monedas = {productos[pid].moneda for pid in producto_ids}
-        if len(monedas) > 1:
-            raise ValidationError('No puedes mezclar productos en USD y VES en un mismo ticket.')
-        moneda = monedas.pop()
-
-        tasa = TasaCambio.vigente()
-
         try:
-            with transaction.atomic():
-                total = sum(
-                    productos[item['producto_id']].precio * item['cantidad']
-                    for item in data['items']
-                )
-                primer_producto = productos[data['items'][0]['producto_id']]
-                order = StoreOrder.objects.create(
-                    usuario=request.user,
-                    producto=primer_producto,
-                    cantidad=data['items'][0]['cantidad'],
-                    precio_unitario=primer_producto.precio,
-                    total=total,
-                    moneda=moneda,
-                    tasa_aplicada=tasa.valor_bs if tasa else None,
-                    estado=StoreOrder.ESTADO_COMPLETADO,
-                    canal=StoreOrder.CANAL_PRESENCIAL,
-                    notas=data.get('notas') or None,
-                )
-                movimientos = []
-                for item in data['items']:
-                    producto = productos[item['producto_id']]
-                    StoreOrderItem.objects.create(
-                        order=order,
-                        producto=producto,
-                        cantidad=item['cantidad'],
-                        precio_unitario=producto.precio,
-                        subtotal=producto.precio * item['cantidad'],
-                    )
-                    movimientos.append(registrar_movimiento(
-                        producto,
-                        MovimientoStock.TIPO_VENTA,
-                        -item['cantidad'],
-                        MovimientoStock.ORIGEN_VENTA_PRESENCIAL,
-                        order=order,
-                        almacen=almacen,
-                    ))
+            order, movimientos = registrar_venta_presencial(
+                tienda=tienda,
+                usuario=request.user,
+                items=data['items'],
+                almacen_id=data.get('almacen_id'),
+                notas=data.get('notas', ''),
+            )
         except DjangoValidationError as exc:
-            raise ValidationError(exc.messages[0] if exc.messages else 'No se pudo registrar la venta.')
+            return Response(
+                {'detail': exc.messages[0] if exc.messages else 'No se pudo registrar la venta.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         return Response(
             {

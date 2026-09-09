@@ -184,6 +184,63 @@ un producto sin control. No ejecutar ajustes sobre inventario operativo para pro
 Las reservas siguen desactivadas y la idempotencia de reintentos de red sigue pendiente.
 No marcar las casillas generales de inventario/POS como completas con esta evidencia local.
 
+## Evidencia del sexto bloque: disponibilidad en POS (2026-09-09)
+
+Bases: backend `c7f4fff`, frontend `3dcfcbf`, repositorios limpios y sincronizados con
+`origin/dev` al comenzar. Se conserva el aviso de migraciones previamente documentado;
+este bloque no añade campos, tablas ni dependencias.
+
+- `[x]` `python3 -m py_compile store/services/ventas.py store/views.py
+  tests/test_ventas_service.py`.
+- `[x]` `python3 -m unittest discover -s tests -v`: 27 pruebas aprobadas. Las 10 nuevas
+  prueban el servicio real con dobles de ORM: productos/almacén por tienda, orden de bloqueo,
+  monedas, totales, tasa ausente, líneas repetidas, movimientos y propagación del error
+  hacia la transacción. **No prueban rollback SQL ni concurrencia real.**
+- `[x]` `node --test scripts/inventory.test.cjs`: 12 pruebas aprobadas. Nuevos casos:
+  servicios con stock legado, saldo desconocido, cantidades por almacén, cambio de almacén,
+  reconsulta que detecta otra salida y origen vacío con existencias en otra ubicación.
+- `[x]` `npx tsc --noEmit`: mismos 75 errores preexistentes; salida final idéntica a la
+  línea base, sin errores nuevos en archivos modificados.
+- `[x]` `python3 scripts/smoke_inventory_routes.py
+  https://backend-ojeda-app-production.up.railway.app`: ocho casos aprobados (salud y
+  rechazo anónimo). No se usaron cuentas ni inventario operativo.
+- `[ ]` Confirmar revisión desplegada en Railway y ejecutar los casos siguientes.
+
+### Casos autenticados y visuales pendientes
+
+1. `[ ]` Producto P con A1=2, A2=8, total=10. En Modo caja, seleccionar A1, escanear P dos
+   veces y comprobar que un tercer escaneo o `+` se rechaza. Debe indicar disponible=2.
+2. `[ ]` Cambiar a A2: permitir tres unidades. Volver a A1 conservando el ticket: indicar
+   insuficiencia y deshabilitar Cobrar. Reducir a dos: permitir cobrar y confirmar sólo
+   salida A1=0; A2 queda en 8.
+3. `[ ]` Otra sesión consume stock después de preparar el ticket: al cobrar, la reconsulta
+   detecta insuficiencia y no envía la venta. Si la salida compite después de la consulta,
+   el backend debe rechazar atómicamente el ticket y conservar sus datos en la app.
+4. `[ ]` Pulsar Cobrar dos veces antes del siguiente render: una sola petición desde esa
+   pantalla. Mientras cobra no debe aceptar escaneos, cambios de cantidad, eliminación de
+   líneas ni cambio de almacén. Esto no acredita reintentos después de un timeout.
+5. `[ ]` Consulta fallida o que excede 15 segundos: indicar existencias sin confirmar,
+   conservar el ticket y ofrecer actualización; impedir cobro de productos controlados en
+   almacén explícito. Servicio con stock legado 0 y producto sin control: no limitar la
+   cantidad por existencias. Backend anterior sin contexto administrativo: conserva fallback.
+6. `[ ]` Crear producto rápido con stock 1 estando en A2: consultar su inventario antes de
+   agregarlo; si está sólo en principal A1, rechazar la adición en A2. Seleccionar A1 y
+   escanear permite agregarlo. Probar alta rápida normal estando en A1.
+7. `[ ]` Transferencias muestra A1=2; solicitar tres unidades debe rechazarse antes de POST.
+   Elegir A2 permite tres y refresca las existencias después. Si falla la consulta, el saldo
+   desconocido no debe convertirse en cero ni habilitar Confirmar; recuperar con Actualizar.
+8. `[ ]` Navegar entre ajustes, caja y transferencias y cambiar de almacén rápidamente:
+   consultar de nuevo al volver y no sobrescribir una consulta nueva con una respuesta vieja.
+9. `[ ]` PostgreSQL: enviar tickets simultáneos P1/P2 y P2/P1; comprobar que ambos bloquean
+   en el mismo orden y no dejan stock negativo. Forzar insuficiencia en segunda línea:
+   no deben persistir orden, primera línea ni movimientos. Repetir con IDs de otro negocio,
+   almacén inactivo, cantidades inválidas, líneas repetidas y USD/VES mezclados.
+10. `[ ]` Verificar que totales y moneda de la confirmación coinciden con la respuesta del
+    servidor y que el dashboard recibe la venta completada del canal presencial.
+
+Idempotencia persistente, reservas y sesiones de caja permanecen pendientes. No se deben
+marcar como verificadas por el bloqueo local de botones ni por las pruebas con dobles.
+
 ## Pruebas de aislamiento y permisos
 
 - `[ ]` Un usuario no puede consultar el negocio de otra tienda modificando IDs.

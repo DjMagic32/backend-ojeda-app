@@ -23,7 +23,7 @@ ni como afirmación independiente de sus cifras comerciales.
 
 **Estado revisado:** 2026-09-09
 **Código revisado principalmente:** `store/models.py`, `store/views.py`,
-`store/graphql/schema.py`, `store/services/inventario.py` y
+`store/graphql/schema.py`, `store/services/inventario.py`, `store/services/ventas.py` y
 `store/analytics/predicciones.py`.
 
 ### Avance del primer paso
@@ -118,6 +118,39 @@ disponible a logs de Railway en esta sesión (sin CLI/conector de Railway); el d
 del 502 sigue siendo requisito antes de reintentar reservas. Siguiente bloque recomendado:
 pruebas autenticadas de inventario/POS con dos negocios y concurrencia en PostgreSQL;
 después, idempotencia de ventas y sesión de caja.
+
+### Sexto paso: disponibilidad en caja y transferencias (2026-09-09)
+
+- **API:** `[~]` la venta presencial se concentra en
+  `store/services/ventas.py::registrar_venta_presencial`. Bloquea todos los productos por PK
+  dentro de la transacción antes de leer precios, comprobar monedas y crear el ticket.
+  Conserva las líneas en el orden recibido, el almacén opcional, la tasa y el contrato de
+  respuesta. La búsqueda de almacén filtra por tienda y devuelve un error genérico si no
+  está disponible. Falta comprobar rollback y dos tickets simultáneos en PostgreSQL.
+- **App/caja:** `[~]` muestra existencias del almacén por línea, valida la cantidad acumulada
+  al escanear/incrementar y vuelve a consultar antes de cobrar. Al cambiar de almacén,
+  reevalúa el ticket y bloquea el cobro si no alcanza el saldo. Durante la petición bloquea
+  cambios del ticket/almacén y dobles envíos desde la pantalla. Los servicios no se limitan
+  por un stock legado; la confirmación muestra el importe devuelto por la API.
+- **App/transferencias:** `[~]` muestra saldo en origen y lo reconsulta antes de confirmar.
+  Si falla la consulta, ofrece actualizar existencias y no permite confirmar un saldo
+  desconocido. La consulta compartida con ajustes/caja se renueva al volver a cada pantalla
+  y tiene un timeout de 15 segundos. La creación rápida en caja también reconsulta el
+  inventario antes de agregar el nuevo producto, cuyo stock inicial pertenece al principal.
+- **Verificación local:** `[x]` 27 pruebas de servicios con dobles de ORM (17 de inventario
+  y 10 de ventas), 12 pruebas del helper de existencias, `py_compile` y TypeScript sin
+  diferencias respecto a sus 75 errores preexistentes. No acredita ejecución en Android,
+  SQL ni concurrencia real.
+- **Rutas:** `[x]` smoke anónimo de ocho casos en Railway: salud `200` y rutas protegidas
+  `401`; no confirma operaciones autenticadas ni identifica la revisión desplegada.
+- **Operación:** `[~]` no cambia modelos, migraciones, dependencias ni `start.sh`. Sigue
+  pendiente confirmar la revisión desplegada y los casos autenticados descritos en el plan.
+
+**Idempotencia:** se revisó como candidato para este bloque, pero necesita un registro
+persistente por negocio/operación, restricción única y recuperación tras timeout/reinicio.
+Su migración queda pendiente de resolver la comparación completa de modelos y el despliegue
+de migraciones. Los bloqueos de botones y las transacciones de este paso **no** hacen seguros
+los reintentos de red. Las reservas y la sesión de caja siguen pendientes.
 
 ## Conclusión ejecutiva
 
@@ -216,6 +249,9 @@ el negocio y la sucursal correspondiente.
 
 - `[x]` Venta presencial básica desde `VentaPresencialCreateView`, con múltiples líneas,
   descuento de inventario y soporte de código de barras en la app.
+- `[~]` Validación de existencias por almacén en caja: saldo por línea, validación de
+  cantidades y consulta previa al cobro implementados; falta comprobar Android y concurrencia
+  real del servicio transaccional de ventas.
 - `[x]` Pedido online con items, estado, pago reportado/confirmado y comprobante.
 - `[~]` Dashboard de tienda y separación de canal online/presencial; falta convertirlo en
   cierre operativo de caja y reportes contables.
