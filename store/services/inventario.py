@@ -29,16 +29,34 @@ def obtener_almacen_principal(producto):
     )
 
 
-def registrar_movimiento(producto, tipo, delta, origen, order=None, almacen=None):
+def registrar_movimiento(producto, tipo, delta, origen, order=None, almacen=None, nuevo_stock=None):
     """Registra un movimiento y conserva el stock agregado por compatibilidad.
 
     Cuando la tienda tiene estructura administrativa, las operaciones antiguas
     que no envían almacén se registran automáticamente en el principal. Así,
     las ventas online, presenciales y ajustes existentes no quedan separadas
     del nuevo inventario por almacén.
+
+    ``nuevo_stock`` es un conteo absoluto del almacén efectivo. Se calcula su
+    delta después de bloquear el producto y devuelve None si no hay cambios.
+    También permite activar el control de stock dentro de la transacción.
     """
     with transaction.atomic():
         producto = ProductoTienda.objects.select_for_update().get(pk=producto.pk)
+
+        inicializando_stock = producto.stock is None and nuevo_stock is not None
+        if origen == MovimientoStock.ORIGEN_AJUSTE_MANUAL:
+            if producto.tipo == ProductoTienda.TIPO_SERVICIO:
+                raise ValidationError('Los servicios no manejan stock.')
+            if producto.stock is None and nuevo_stock is None:
+                raise ValidationError('Este producto no tiene control de stock. Usa "nuevo_stock" para definirlo.')
+        if nuevo_stock is not None:
+            if nuevo_stock < 0 or producto.tipo == ProductoTienda.TIPO_SERVICIO:
+                raise ValidationError('Indica un stock no negativo para un producto.')
+            if inicializando_stock:
+                # La activación también se revierte si falla el movimiento.
+                producto.stock = 0
+                producto.save(update_fields=['stock'])
 
         if producto.tipo == ProductoTienda.TIPO_SERVICIO or producto.stock is None:
             return MovimientoStock.objects.create(
@@ -54,6 +72,8 @@ def registrar_movimiento(producto, tipo, delta, origen, order=None, almacen=None
         if almacen is not None:
             if almacen.sucursal.negocio.tienda_id != producto.tienda_id:
                 raise ValidationError('El almacén no pertenece a la tienda del producto.')
+            if not almacen.activo or not almacen.sucursal.activo:
+                raise ValidationError('El almacén indicado no está disponible.')
 
             existencias = InventarioAlmacen.objects.filter(producto=producto)
             tiene_existencias = existencias.exists()
@@ -67,6 +87,13 @@ def registrar_movimiento(producto, tipo, delta, origen, order=None, almacen=None
                 },
             )
             existencia = InventarioAlmacen.objects.select_for_update().get(pk=existencia.pk)
+            if nuevo_stock is not None:
+                # El conteo corresponde al almacén efectivo, incluso en clientes
+                # antiguos que omiten almacen_id; nunca al total del producto.
+                delta = nuevo_stock - existencia.cantidad
+                if delta == 0 and not inicializando_stock:
+                    return None
+                tipo = MovimientoStock.TIPO_ENTRADA if delta >= 0 else MovimientoStock.TIPO_AJUSTE
             nueva_existencia = existencia.cantidad + delta
             if nueva_existencia < 0:
                 raise ValidationError(
@@ -76,13 +103,13 @@ def registrar_movimiento(producto, tipo, delta, origen, order=None, almacen=None
 
             existencia.cantidad = nueva_existencia
             existencia.save(update_fields=['cantidad', 'actualizado'])
-            nuevo_stock = (
+            stock_resultante = (
                 InventarioAlmacen.objects
                 .filter(producto=producto)
                 .aggregate(total=Sum('cantidad'))['total']
                 or 0
             )
-            producto.stock = nuevo_stock
+            producto.stock = stock_resultante
             producto.save(update_fields=['stock'])
 
             return MovimientoStock.objects.create(
@@ -90,26 +117,33 @@ def registrar_movimiento(producto, tipo, delta, origen, order=None, almacen=None
                 almacen=almacen,
                 tipo=tipo,
                 cantidad=delta,
-                stock_resultante=nuevo_stock,
+                stock_resultante=stock_resultante,
                 stock_almacen_resultante=nueva_existencia,
                 origen=origen,
                 order=order,
             )
 
-        nuevo_stock = producto.stock + delta
-        if nuevo_stock < 0:
+        if InventarioAlmacen.objects.filter(producto=producto).exists():
+            raise ValidationError('Selecciona un almacén activo para modificar este inventario.')
+        if nuevo_stock is not None:
+            delta = nuevo_stock - producto.stock
+            if delta == 0 and not inicializando_stock:
+                return None
+            tipo = MovimientoStock.TIPO_ENTRADA if delta >= 0 else MovimientoStock.TIPO_AJUSTE
+        stock_resultante = producto.stock + delta
+        if stock_resultante < 0:
             raise ValidationError(
                 f"Stock insuficiente de '{producto.nombre}': quedan {producto.stock} unidad(es)."
             )
 
-        producto.stock = nuevo_stock
+        producto.stock = stock_resultante
         producto.save(update_fields=['stock'])
 
         return MovimientoStock.objects.create(
             producto=producto,
             tipo=tipo,
             cantidad=delta,
-            stock_resultante=nuevo_stock,
+            stock_resultante=stock_resultante,
             stock_almacen_resultante=None,
             origen=origen,
             order=order,
@@ -158,7 +192,8 @@ def transferir_stock(producto, almacen_origen, almacen_destino, cantidad, usuari
         # se considera ubicado en el origen de la primera transferencia.
         source_balance = balances_by_warehouse.get(origen.pk)
         if source_balance is None:
-            initial_quantity = producto.stock if not balances else 0
+            tiene_existencias = InventarioAlmacen.objects.filter(producto=producto).exists()
+            initial_quantity = 0 if tiene_existencias else producto.stock
             source_balance = InventarioAlmacen.objects.create(
                 producto=producto,
                 almacen=origen,

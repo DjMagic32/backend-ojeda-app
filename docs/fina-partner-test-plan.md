@@ -111,12 +111,78 @@ flujos actuales.
   `0039_transferencia_inventario`, consulta protegida y transferencia atómica entre
   almacenes con movimientos de salida/entrada trazables.
 - **App:** `[~]` resumen de productos asociados por almacén, historial con ubicación del
-  movimiento y pantalla para transferir existencias; queda completar selección de almacén
-  en ventas/ajustes y recepción avanzada.
+  movimiento y pantalla para transferir existencias; selección de almacén en ventas/ajustes
+  implementada. Queda validarla en Android y completar recepción avanzada.
 - **Operación:** `[x]` `0038_inventario_almacen` y `0039_transferencia_inventario` se
   ejecutaron en Railway y respondieron `No migrations to apply`.
 - **Pruebas:** `[ ]` ejecutar los casos de inventario con dos almacenes, transferencia
   insuficiente, concurrencia, servicios sin stock y compatibilidad con clientes antiguos.
+
+## Evidencia del quinto bloque: ajustes y transferencias (2026-09-09)
+
+Bases revisadas: backend `cb7bb86` y frontend `151fd8e`, ambos en `dev`, limpios y
+sincronizados con `origin/dev` antes de editar. Sin cambios de modelos ni nuevas migraciones.
+
+- `[x]` `python3 -m py_compile store/services/inventario.py store/views.py
+  tests/test_inventario_service.py scripts/smoke_inventory_routes.py`.
+- `[x]` `python3 -m unittest discover -s tests -v`: 17 pruebas del servicio real con dobles
+  de ORM. Cubren conteos por almacén, deltas, fallback principal/legado, conteo sin cambios,
+  activación en cero, servicios, insuficiencia, almacenes ajenos/inactivos y transferencias.
+  **No son pruebas de Django ni acreditan transacciones SQL, rollback o concurrencia.**
+- `[x]` La regresión de transferencia con stock sólo en un tercer almacén falla sobre
+  `cb7bb86` (`ValidationError not raised`) y pasa con la corrección.
+- `[x]` Frontend: `node --test scripts/inventory.test.cjs`, 7 pruebas del helper real:
+  saldos diferentes, almacén sin fila, carga fallida, cero, ausencia de control y fallback.
+- `[x]` Frontend: `npx tsc --noEmit`, 75 errores preexistentes; salida idéntica antes/después
+  y sin nuevos errores en archivos modificados. No equivale a typecheck global limpio.
+- `[x]` `python3 scripts/smoke_inventory_routes.py
+  https://backend-ojeda-app-production.up.railway.app`: salud `200`; `401` para GET de
+  negocio, inventario, transferencias y movimientos, y POST de ajuste, transferencia y venta.
+  No usa credenciales ni modifica datos; no acredita el comportamiento autenticado.
+- `[~]` Aviso de migraciones revisado en código: falta `transferencia` en las opciones
+  históricas de `MovimientoStock.origen`. Comparación completa pendiente en un entorno
+  preparado. `start.sh` condiciona `migrate` a `AUTO_MIGRATE=1`.
+- `[ ]` Confirmar en Railway la revisión desplegada y revisar logs del 502 anterior.
+- `[ ]` Ejecutar casos autenticados, rollback y concurrencia sobre PostgreSQL de prueba.
+- `[ ]` Probar Android y registrar APK, cuentas de prueba y capturas sanitizadas.
+
+### Casos reproducibles pendientes en API y Android
+
+Usar datos de prueba identificados y autorizados: propietario A, propietario B, producto P
+con 10 unidades en almacén A1 (principal) y 20 en A2, un almacén A3 vacío, un servicio y
+un producto sin control. No ejecutar ajustes sobre inventario operativo para probar.
+
+1. `[ ]` En “Mis productos”, seleccionar A1: saldo 10, total 30. Pulsar `+`: A1=11,
+   A2=20, total=31 y un movimiento `+1`. Pulsar `−`: vuelve a 10/20/30. Cambiar a A2:
+   muestra 20. Un doble toque mientras hay petición pendiente sólo envía una solicitud.
+2. `[ ]` `POST /api/store/productos-tienda/{P}/ajustar-stock/` con
+   `{"almacen_id": A1, "nuevo_stock": 11}`: A1=11, A2=20, total=31. Repetir devuelve
+   `movimiento: null`. Restablecer la fixture; enviar `{"nuevo_stock": 11}` sin almacén
+   produce el mismo conteo en principal. Los botones nuevos deben enviar `delta`, no un
+   total calculado por la app.
+3. `[ ]` Con saldo A1=10, enviar `delta: -11`: `400`, sin cambiar total ni movimientos.
+   Servicio con ajuste: `400`. Producto sin control con `delta`: `400`; con
+   `nuevo_stock: 0`: activa el control y registra entrada cero. Provocar un fallo durante
+   el movimiento en entorno de prueba: también debe revertirse la activación.
+4. `[ ]` Almacén inactivo o de B: ajuste/venta/transferencia rechazados sin cambios.
+   Sin principal activo pero con detalle existente, una operación sin `almacen_id` debe
+   pedir seleccionar almacén y no modificar sólo el agregado. Probar aparte instalación
+   legada sin almacenes/detalle: conserva el ajuste del stock total.
+5. `[ ]` Crear fixture con stock sólo en A3 y **sin filas** de inventario para P en A1/A2.
+   Transferir A1→A2 debe fallar sin duplicar las unidades de A3 ni dejar filas por rollback.
+   Transferir A3→A1 debe conservar el total y generar dos movimientos opuestos.
+   En la app, cantidades `1.5` o `2abc` deben rechazarse, no convertirse en 1 o 2.
+6. `[ ]` Desconectar al consultar inventario: no mostrar cero ni permitir ajustar el almacén
+   sin saldo confirmado; reintentar y recuperar el saldo. Cambiar rápidamente de almacén y
+   volver desde transferencias: no mostrar existencias del almacén anterior.
+7. `[ ]` En PostgreSQL, enviar deltas simultáneos `+1/+1` desde dos sesiones: ambos deben
+   acumularse. Con una unidad, competir venta/ajuste negativo: sólo una salida debe
+   confirmar. Validar atomicidad de venta con varias líneas y dos transferencias opuestas.
+8. `[ ]` En Modo caja, vender en A2, verificar salida sólo de A2, total y movimiento;
+   repetir con servicios, stock insuficiente y clientes antiguos sin almacén explícito.
+
+Las reservas siguen desactivadas y la idempotencia de reintentos de red sigue pendiente.
+No marcar las casillas generales de inventario/POS como completas con esta evidencia local.
 
 ## Pruebas de aislamiento y permisos
 

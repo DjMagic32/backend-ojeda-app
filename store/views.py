@@ -670,53 +670,31 @@ class ProductoTiendaViewSet(viewsets.ModelViewSet):
             if almacen.sucursal.negocio.tienda_id != producto.tienda_id:
                 raise ValidationError('El almacén no pertenece a tu tienda.')
 
-        if producto.tipo == ProductoTienda.TIPO_SERVICIO:
-            raise ValidationError('Los servicios no manejan stock.')
-
-        stock_almacen = None
-        if almacen is not None:
-            stock_almacen = (
-                InventarioAlmacen.objects.filter(
-                    producto=producto,
-                    almacen=almacen,
-                )
-                .values_list('cantidad', flat=True)
-                .first()
-                or 0
-            )
-
-        if 'nuevo_stock' in data:
-            actual = stock_almacen if almacen is not None else (producto.stock or 0)
-            delta = data['nuevo_stock'] - actual
-            if delta == 0 and producto.stock is not None:
-                return Response({'producto_id': producto.id, 'stock': producto.stock, 'movimiento': None})
-        else:
-            delta = data['delta']
-            if producto.stock is None:
-                raise ValidationError('Este producto no tiene control de stock. Usa "nuevo_stock" para definirlo.')
-
+        delta = data.get('delta', 0)
         tipo = MovimientoStock.TIPO_ENTRADA if delta > 0 else MovimientoStock.TIPO_AJUSTE
-        if producto.stock is None:
-            producto.stock = 0
-            producto.save(update_fields=['stock'])
-            tipo = MovimientoStock.TIPO_ENTRADA
-
         try:
-            movimiento = registrar_movimiento(
-                producto,
-                tipo,
-                delta,
-                MovimientoStock.ORIGEN_AJUSTE_MANUAL,
-                almacen=almacen,
-            )
+            with transaction.atomic():
+                movimiento = registrar_movimiento(
+                    producto,
+                    tipo,
+                    delta,
+                    MovimientoStock.ORIGEN_AJUSTE_MANUAL,
+                    almacen=almacen,
+                    nuevo_stock=data.get('nuevo_stock'),
+                )
+                producto.refresh_from_db(fields=['stock'])
+                resultado = {
+                    'producto_id': producto.id,
+                    'stock': producto.stock,
+                    'movimiento': MovimientoStockSerializer(movimiento).data if movimiento else None,
+                }
         except DjangoValidationError as exc:
-            raise ValidationError(exc.messages[0] if exc.messages else 'El stock no puede quedar negativo.')
+            return Response(
+                {'detail': exc.messages[0] if exc.messages else 'No se pudo ajustar el stock.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        return Response({
-            'producto_id': producto.id,
-            'stock': movimiento.stock_resultante,
-            'movimiento': MovimientoStockSerializer(movimiento).data,
-        })
+        return Response(resultado)
 
     @action(detail=True, methods=['get'], url_path='movimientos',
             permission_classes=[IsAuthenticated, EsTienda])

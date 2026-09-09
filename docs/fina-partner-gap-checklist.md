@@ -21,7 +21,7 @@ para el usuario.
 este análisis). El PDF se usa como referencia de capacidades, no como especificación literal
 ni como afirmación independiente de sus cifras comerciales.
 
-**Estado revisado:** 2026-09-08
+**Estado revisado:** 2026-09-09
 **Código revisado principalmente:** `store/models.py`, `store/views.py`,
 `store/graphql/schema.py`, `store/services/inventario.py` y
 `store/analytics/predicciones.py`.
@@ -46,8 +46,9 @@ ni como afirmación independiente de sus cifras comerciales.
 - **Operación:** `[x]` la migración `0037_sucursal_almacen` quedó aplicada en Railway junto
   con el resto de migraciones del proyecto; falta validar los datos reales con usuarios de
   prueba.
-- **Alcance pendiente:** falta asignarla al inventario y transferir existencias; la pantalla
-  actual no permite todavía renombrar registros existentes.
+- **Alcance pendiente:** la asociación al inventario y las transferencias básicas existen
+  en los pasos siguientes; falta validarlas con datos reales. La pantalla actual no permite
+  todavía renombrar registros existentes.
 
 ### Avance del tercer paso
 
@@ -58,8 +59,8 @@ ni como afirmación independiente de sus cifras comerciales.
   y ajustes antiguos siguen usando automáticamente el almacén principal cuando existe.
 - **App:** `[~]` la pantalla de sucursales y almacenes muestra cuántos productos están
   asociados a cada almacén, el historial de stock muestra la sucursal/almacén del movimiento
-  y hay una pantalla para transferir existencias. Todavía falta seleccionar el almacén
-  explícitamente desde ventas/ajustes.
+  y hay una pantalla para transferir existencias. La selección explícita en ventas/ajustes
+  ya existe desde el cuarto paso; su validación funcional sigue pendiente.
 - **Operación:** `[x]` `0038_inventario_almacen` y `0039_transferencia_inventario` fueron
   ejecutadas en Railway. Django dejó una advertencia sobre cambios de modelos sin migración
   equivalente; no se debe marcar el bloque completo hasta revisar ese aviso y probar datos
@@ -76,6 +77,47 @@ ni como afirmación independiente de sus cifras comerciales.
   endpoint anterior y el fallback del almacén principal.
 - **Pruebas:** `[ ]` falta comprobar con dos almacenes, stock insuficiente, servicios y
   permisos de un almacén de otra tienda.
+
+### Quinto paso: correcciones de ajustes y transferencias (2026-09-09)
+
+- **API:** `[~]` `nuevo_stock` se convierte en delta después de bloquear el producto y
+  leer las existencias del almacén efectivo. Sin `almacen_id` cuenta el principal, no el
+  total agregado. La activación del control de stock también queda dentro de la transacción;
+  un conteo sin cambios devuelve `movimiento: null`. El servicio rechaza ajustes sobre
+  servicios, almacenes ajenos/inactivos y operaciones sin principal cuando ya existe detalle
+  de inventario. Falta verificar estas condiciones contra PostgreSQL y usuarios reales.
+- **Transferencias:** `[~]` se corrigió un caso que copiaba el stock total al origen cuando
+  sólo había existencias en un tercer almacén. Ahora busca detalle en todos los almacenes
+  del producto antes de aplicar el fallback legado. No se repararon datos históricos:
+  cualquier posible discrepancia requiere una auditoría separada.
+- **App:** `[~]` “Mis productos” muestra saldo del almacén y total por separado; los botones
+  envían `delta: 1/-1`, recargan las existencias y bloquean solicitudes simultáneas del mismo
+  producto. Una consulta fallida no se presenta como saldo cero; permite reintentar.
+  Las transferencias rechazan cantidades fraccionarias en vez de truncarlas. Falta prueba
+  visual en Android. El bloqueo del botón no equivale a idempotencia de red.
+- **Verificación local:** `[x]` compilación Python, 17 pruebas del servicio con dobles de ORM
+  y 7 pruebas del helper de la app. `npx tsc --noEmit` conserva exactamente los 75 errores
+  preexistentes, sin nuevos errores. No se ejecutaron Django, migraciones ni una base local.
+- **Rutas:** `[x]` smoke anónimo en Railway: salud `200` y siete rutas administrativas
+  GET/POST con `401`. Esto verifica disponibilidad y autenticación requerida; no permisos
+  entre negocios ni operaciones autenticadas.
+- **Operación:** `[~]` sin cambios de modelos, migraciones, dependencias ni arranque. El
+  smoke no identifica el commit que Railway está sirviendo; falta confirmar la revisión
+  desplegada en sus logs y probar el flujo autenticado.
+
+**Revisión del aviso de migraciones:** existe al menos una diferencia comprobada:
+`MovimientoStock.origen` añade la opción `transferencia` en `models.py`, mientras que
+`0024_inventario_pro_movimiento_stock` no la incluye y `0039_transferencia_inventario`
+sólo altera `tipo`. No demuestra que sea la única diferencia ni que explique el 502.
+Se mantiene pendiente comparar el estado completo en un entorno Django preparado antes de
+crear otra migración. Además, el `start.sh` actual sólo ejecuta `migrate` si `AUTO_MIGRATE=1`;
+no se debe asumir que cada push aplica migraciones automáticamente.
+
+**Reservas y caja:** no se reactivaron reservas ni se añadió sesión de caja. No hay acceso
+disponible a logs de Railway en esta sesión (sin CLI/conector de Railway); el diagnóstico
+del 502 sigue siendo requisito antes de reintentar reservas. Siguiente bloque recomendado:
+pruebas autenticadas de inventario/POS con dos negocios y concurrencia en PostgreSQL;
+después, idempotencia de ventas y sesión de caja.
 
 ## Conclusión ejecutiva
 
@@ -157,8 +199,9 @@ el negocio y la sucursal correspondiente.
   preparó un primer diseño en el commit `8082c31`, pero se revirtió tras dejar el servicio de
   Railway en 502; falta revisar los logs de Railway y volver a desplegarlo de forma segura.
 - `[~]` Existencias por sucursal y almacén: existe el detalle transaccional, la migración del
-  stock legado, asociación automática al almacén principal y consulta protegida; falta la
-  operación completa por almacén desde la app.
+  stock legado, asociación automática al almacén principal y consulta protegida. La app
+  selecciona almacén en caja/ajustes y distingue el saldo local del total en “Mis productos”;
+  falta validar el flujo completo con datos reales.
 - `[~]` Transferencias entre almacenes: existe operación atómica con salida/entrada trazables
   y pantalla de prueba; faltan recepción formal, mermas, devoluciones y conteos físicos.
 - `[ ]` Costo promedio ponderado calculado de forma transaccional.
