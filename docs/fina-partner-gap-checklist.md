@@ -153,7 +153,9 @@ el negocio y la sucursal correspondiente.
 - `[x]` Consulta de movimientos y validación para evitar stock negativo en las operaciones
   actuales.
 - `[~]` Reservas de inventario para órdenes online: existe el flujo de pedido, pero debemos
-  definir una reserva con vencimiento para evitar vender dos veces la misma existencia.
+  definir una reserva con vencimiento para evitar vender dos veces la misma existencia. Se
+  preparó un primer diseño en el commit `8082c31`, pero se revirtió tras dejar el servicio de
+  Railway en 502; falta revisar los logs de Railway y volver a desplegarlo de forma segura.
 - `[~]` Existencias por sucursal y almacén: existe el detalle transaccional, la migración del
   stock legado, asociación automática al almacén principal y consulta protegida; falta la
   operación completa por almacén desde la app.
