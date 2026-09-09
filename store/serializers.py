@@ -858,6 +858,14 @@ class VentaPresencialSerializer(serializers.Serializer):
     notas = serializers.CharField(required=False, allow_blank=True)
 
 
+class OperacionVentaPresencialSerializer(VentaPresencialSerializer):
+    clave_operacion = serializers.UUIDField(error_messages={
+        'required': 'Indica la clave de la operación.',
+        'invalid': 'La clave de la operación no es válida.',
+        'null': 'Indica la clave de la operación.',
+    })
+
+
 class ArticuloUsadoVendedorSerializer(serializers.ModelSerializer):
     class Meta:
         model = Usuario

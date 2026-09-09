@@ -41,6 +41,7 @@ from .views import (
     NotificacionUnreadCountView,
     ReporteCreateView,
     VentaPresencialCreateView,
+    OperacionVentaPresencialView,
     ArticuloUsadoViewSet,
 )
 
@@ -84,5 +85,7 @@ urlpatterns = [
     path('store/dashboard/', StoreDashboardView.as_view(), name='store-dashboard'),
     path('reportes/', ReporteCreateView.as_view(), name='reportes'),
     path('ventas-presenciales/', VentaPresencialCreateView.as_view(), name='ventas-presenciales'),
+    path('ventas-presenciales/operaciones/', OperacionVentaPresencialView.as_view(), name='operaciones-venta'),
+    path('ventas-presenciales/operaciones/<uuid:clave>/cancelar/', OperacionVentaPresencialView.as_view(), name='cancelar-operacion-venta'),
     path('admin/run-migrations/', RunMigrationsView.as_view(), name='run-migrations'),
 ]

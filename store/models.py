@@ -538,6 +538,22 @@ class StoreOrder(models.Model):
         return f"Orden #{self.id} - {self.usuario.email} -> {self.producto.nombre}"
 
 
+class OperacionVentaPresencial(models.Model):
+    # Registro independiente: la respuesta confirmada sobrevive a cambios posteriores
+    # del catálogo. Sin relaciones inversas que alteren consultas del sistema legado.
+    tienda_id = models.PositiveBigIntegerField()
+    clave = models.UUIDField()
+    huella = models.CharField(max_length=64, blank=True, default='')
+    respuesta = models.JSONField(null=True, blank=True)
+    cancelada = models.BooleanField(default=False)
+    creado = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(
+            fields=['tienda_id', 'clave'], name='unique_operacion_venta_tienda',
+        )]
+
+
 class StoreOrderItem(models.Model):
     order = models.ForeignKey(StoreOrder, on_delete=models.CASCADE, related_name='items')
     producto = models.ForeignKey(ProductoTienda, on_delete=models.CASCADE, related_name='order_items')

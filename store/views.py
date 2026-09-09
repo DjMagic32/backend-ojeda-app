@@ -1,10 +1,12 @@
 import logging
+import json
 import secrets
 from io import StringIO
 
 from django.conf import settings
 from django.core.management import call_command
 from rest_framework.response import Response
+from rest_framework.renderers import JSONRenderer
 from rest_framework.permissions import IsAuthenticated, AllowAny, IsAdminUser
 from rest_framework import viewsets, status, permissions, generics
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
@@ -85,6 +87,7 @@ from .serializers import (
     HistorialStockQuerySerializer,
     AjusteStockSerializer,
     VentaPresencialSerializer,
+    OperacionVentaPresencialSerializer,
     ArticuloUsadoSerializer,
 )
 from .models import MovimientoStock, StoreOrderItem, ArticuloUsado
@@ -94,6 +97,10 @@ from .services.push import send_push_to_user
 from .services.inventario import registrar_movimiento, transferir_stock
 from .services.ventas import registrar_venta_presencial
 from .services.historial import consultar_movimientos
+from .services.ventas_idempotentes import (
+    cancelar_operacion, confirmar_operacion, huella_venta,
+    idempotencia_disponible, ConflictoOperacion,
+)
 from .upload_validation import validate_chat_attachment, validate_image_upload
 
 logger = logging.getLogger(__name__)
@@ -752,6 +759,66 @@ class VentaPresencialCreateView(generics.GenericAPIView):
             },
             status=status.HTTP_201_CREATED,
         )
+
+
+class OperacionVentaPresencialView(generics.GenericAPIView):
+    permission_classes = [IsAuthenticated, EsTienda]
+    serializer_class = OperacionVentaPresencialSerializer
+
+    def _tienda(self):
+        try:
+            return Tienda.objects.get(usuario=self.request.user)
+        except Tienda.DoesNotExist:
+            raise ValidationError('El usuario autenticado no tiene una tienda asociada.')
+
+    def get(self, request, clave=None):
+        if clave is not None:
+            return Response({'detail': 'Usa POST para cancelar la operación.'}, status=405)
+        self._tienda()
+        return Response({'version': 1, 'idempotencia_disponible': idempotencia_disponible()})
+
+    def post(self, request, clave=None):
+        tienda = self._tienda()
+        if not idempotencia_disponible():
+            return Response({'detail': 'La protección de ventas aún no está disponible. Inténtalo más tarde.'}, status=503)
+        if clave is not None:
+            resultado = cancelar_operacion(tienda.pk, clave)
+            return Response({'clave_operacion': str(clave), 'cancelada': resultado is None,
+                             'resultado': resultado})
+        serializer = self.get_serializer(data=request.data)
+        if not serializer.is_valid():
+            mensajes = {
+                'clave_operacion': 'La clave de la operación no es válida.',
+                'items': 'Indica al menos un producto y cantidades enteras mayores que cero.',
+                'almacen_id': 'El almacén de la operación no es válido.',
+                'notas': 'Las notas de la operación no son válidas.',
+            }
+            campo = next(iter(serializer.errors))
+            return Response({'detail': mensajes.get(campo, 'Revisa los datos de la operación.')}, status=400)
+        data = serializer.validated_data
+
+        def crear_venta():
+            order, movimientos = registrar_venta_presencial(
+                tienda, request.user, data['items'], data.get('almacen_id'), data.get('notas', ''),
+            )
+            # Guarda JSON serializado, no referencias a precios/productos mutables.
+            return json.loads(JSONRenderer().render({
+                'order': StoreOrderSerializer(order, context={'request': request}).data,
+                'movimientos': MovimientoStockSerializer(movimientos, many=True).data,
+            }))
+
+        try:
+            resultado, repetida = confirmar_operacion(
+                tienda.pk, data['clave_operacion'],
+                huella_venta(data['items'], data.get('almacen_id'), data.get('notas', '')),
+                crear_venta,
+            )
+        except ConflictoOperacion as exc:
+            return Response({'detail': str(exc)}, status=409)
+        except DjangoValidationError as exc:
+            return Response({'detail': exc.messages[0] if exc.messages else 'No se pudo registrar la venta.'}, status=400)
+        return Response({**resultado, 'clave_operacion': str(data['clave_operacion']),
+                         'repetida': repetida}, status=200 if repetida else 201)
 
 
 class StoreOrderViewSet(viewsets.ModelViewSet):

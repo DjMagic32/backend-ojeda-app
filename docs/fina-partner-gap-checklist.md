@@ -118,7 +118,10 @@ ni como afirmación independiente de sus cifras comerciales.
 `0024_inventario_pro_movimiento_stock` no la incluye y `0039_transferencia_inventario`
 sólo altera `tipo`. No demuestra que sea la única diferencia ni que explique el 502.
 Se mantiene pendiente comparar el estado completo en un entorno Django preparado antes de
-crear otra migración. Además, el `start.sh` actual sólo ejecuta `migrate` si `AUTO_MIGRATE=1`;
+corregir las diferencias de tablas existentes. Para idempotencia se revisó por separado
+`0040_operacion_venta_presencial`: sólo crea una tabla independiente y sus campos coinciden
+con el nuevo modelo; no altera las tablas existentes ni pretende resolver el aviso anterior.
+Además, el `start.sh` actual sólo ejecuta `migrate` si `AUTO_MIGRATE=1`;
 no se debe asumir que cada push aplica migraciones automáticamente.
 
 **Reservas y caja:** no se reactivaron reservas ni se añadió sesión de caja. No hay acceso
@@ -206,6 +209,32 @@ no se modificó inventario operativo y no se activaron reservas ni idempotencia.
   sesión real y Android. La auditoría de autor y motivo de ajustes continúa pendiente.
 - **Compatibilidad:** sin cambios de modelos, migraciones, stock ni arranque; el aviso
   anterior de diferencias de migraciones sigue registrado y no se intenta corregir aquí.
+
+### Noveno paso: ventas presenciales idempotentes y recuperación (2026-09-09)
+
+- **API:** `[~]` nueva ruta de operaciones con UUID por tienda, huella del ticket y respuesta
+  original persistida. Un reintento devuelve el mismo comprobante sin consultar nuevamente
+  precios ni descontar stock; reutilizar la clave con otro ticket devuelve `409`.
+  La restricción única y el bloqueo de operación preceden a los bloqueos de productos;
+  venta y comprobante se guardan en una sola transacción. Falta validación PostgreSQL real.
+- **Cancelación:** implementada como estado definitivo de la operación. Si el cobro ya
+  terminó devuelve su comprobante; si no, conserva una marca que rechaza POST atrasados.
+  No anula ventas confirmadas ni devuelve existencias.
+- **App:** `[~]` guarda clave, líneas y almacén antes del POST, separados por cuenta y
+  servidor. Recupera al reabrir caja, congela el ticket pendiente y permite recuperar o
+  cancelar de forma segura. Conserva el comprobante hasta pulsar “Nueva venta”. Si falla
+  el almacenamiento no envía el cobro. Pendiente prueba visual y cierre real de Android.
+- **Compatibilidad:** la ruta anterior sigue funcionando para apps anteriores, sin garantía
+  de idempotencia. La nueva app sólo usa la ruta protegida; comprueba disponibilidad y no
+  degrada a cobro sin clave. Sin tabla nueva, las operaciones responden `503` sin escrituras.
+- **Migración:** `[~]` `0040_operacion_venta_presencial` preparada y revisada estáticamente:
+  sólo crea `OperacionVentaPresencial`; no modifica datos, arranque ni tablas existentes.
+  Guarda el ID de tienda y un comprobante JSON sin relaciones inversas para evitar cambios
+  en consultas/borrados legados durante el despliegue. No hay limpieza automática de claves.
+  Aplicación en Railway aún no confirmada: requiere `migrate` en su entorno.
+- **Verificación local:** `[x]` compilación Python, 53 pruebas locales de backend (10 nuevas
+  de idempotencia) y 12 del almacenamiento/recuperación frontend. TypeScript conserva los
+  75 errores preexistentes. Se añadieron 7 casos PostgreSQL, preparados pero no ejecutados.
 
 ## Conclusión ejecutiva
 
@@ -318,8 +347,9 @@ el negocio y la sucursal correspondiente.
 - `[ ]` Cargos configurables: delivery, empaque, propina, comisión, descuento e impuestos.
 - `[ ]` Comandas, mesas y estados de cocina para restaurantes.
 - `[ ]` Venta omnicanal unificada: marketplace, POS, enlaces externos y venta manual.
-- `[ ]` Idempotencia por operación para que un doble toque o reintento de red no cree dos
-  ventas.
+- `[~]` Idempotencia de ventas presenciales implementada en nueva API y Modo caja, incluida
+  recuperación tras respuesta perdida y cierre de app. Falta confirmar aplicación de `0040`
+  y validar concurrencia PostgreSQL/Android. Las versiones anteriores no obtienen esta garantía.
 
 ## 5. Tesorería y operación bimonetaria
 

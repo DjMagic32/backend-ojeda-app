@@ -24,6 +24,9 @@ def main():
         ('GET', '/api/store/productos-tienda/0/movimientos/?paginado=1&almacen_id=1&origen=ajuste_manual&dias=30', 401),
         ('POST', '/api/store/transferencias-inventario/', 401),
         ('POST', '/api/store/ventas-presenciales/', 401),
+        ('GET', '/api/store/ventas-presenciales/operaciones/', 401),
+        ('POST', '/api/store/ventas-presenciales/operaciones/', 401),
+        ('POST', '/api/store/ventas-presenciales/operaciones/00000000-0000-4000-8000-000000000000/cancelar/', 401),
         ('POST', '/api/store/productos-tienda/0/ajustar-stock/', 401),
     ]
     for method, path, expected in cases:

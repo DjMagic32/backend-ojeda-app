@@ -390,6 +390,91 @@ Validación funcional pendiente, sin bloquear los siguientes desarrollos:
   comprobar rechazo sin devolver movimientos ajenos.
 - `[ ]` Probar una app anterior: recibe un array y conserva el historial original.
 
+## Ventas idempotentes y recuperación de caja (2026-09-09)
+
+Estado: implementación lista para desplegar; activación de la migración y pruebas reales
+pendientes. No se han reactivado reservas ni implementado sesiones de apertura/cierre.
+
+### Contrato
+
+- `GET /api/store/ventas-presenciales/operaciones/`: requiere dueño de tienda y devuelve
+  `{"version":1,"idempotencia_disponible":true|false}` según exista la tabla nueva.
+- `POST` a esa ruta: `clave_operacion` UUID obligatorio, `items`, `almacen_id` opcional y
+  `notas` opcionales. Guarda comprobante, líneas y movimientos en la misma transacción.
+  Respuesta original `201`; reintento `200`, mismo `order`/`movimientos`, `repetida:true` y
+  `clave_operacion`. Una clave con otro payload o cancelada devuelve `409` sin cobrar.
+- `POST /api/store/ventas-presenciales/operaciones/{uuid}/cancelar/`: devuelve `200` con
+  `clave_operacion`, `cancelada` y `resultado`. Si ya se cobró, `cancelada:false` y el
+  comprobante original; si no, `cancelada:true` y `resultado:null`. Una marca persistente
+  impide que un POST atrasado cobre después. Se puede repetir la cancelación.
+- Sin tabla, los POST nuevos devuelven `503`. No se usa la ruta legada como fallback.
+  `POST /api/store/ventas-presenciales/` mantiene el contrato anterior y no es idempotente.
+- El orden de las líneas forma parte de la huella; la app reenvía exactamente el payload
+  guardado. Los reintentos no requieren disponibilidad de stock ni precios actuales.
+- El registro es independiente, con unicidad `(tienda_id, clave)`, sin FK inversas hacia
+  modelos existentes. Guarda una copia JSON de la respuesta autorizada, no referencias al
+  catálogo mutable. Conservar estas operaciones y marcas canceladas en backups; borrarlas
+  elimina la protección frente a reintentos antiguos. No existe endpoint para borrarlas.
+
+### Activación en Railway
+
+`start.sh` sólo ejecuta migraciones con `AUTO_MIGRATE=1`. La sesión de desarrollo no tiene
+CLI/conector ni credenciales de administración de Railway; no se ha ejecutado `manage.py`
+localmente y no se afirma que `0040` esté aplicada. No es necesario cambiar el arranque.
+
+En la consola del servicio backend desplegado, revisar primero:
+
+```bash
+python manage.py migrate store 0040_operacion_venta_presencial --plan
+```
+
+El cambio nuevo esperado es únicamente crear `OperacionVentaPresencial`; `0039` ya fue
+aplicada según el historial del proyecto. Si el plan incluye otros cambios pendientes,
+revisarlos antes de continuar. Aplicar y comprobar:
+
+```bash
+python manage.py migrate store 0040_operacion_venta_presencial --noinput
+python manage.py showmigrations store
+```
+
+Confirmar `[X] 0040_operacion_venta_presencial` y `idempotencia_disponible:true` con sesión
+de tienda. El aviso previo sobre `MovimientoStock.origen` no se corrige con esta migración;
+se compararon estáticamente los campos nuevos y no se modificaron operaciones anteriores.
+No revertir/borrar la tabla una vez que contenga comprobantes o cancelaciones pendientes.
+
+### Verificación
+
+- `[x]` `python3 -m py_compile` de modelos, serializers, vistas, rutas, servicio, migración,
+  pruebas y smoke. `0040` sólo contiene `CreateModel`; campos nuevos comparados con el modelo.
+- `[x]` `python3 -m unittest discover -s tests -v`: 53 pruebas correctas. Las 10 nuevas cubren
+  reintento, conflicto de payload, aislamiento por tienda, ambas órdenes de cancelación,
+  propagación de fallos para rollback y disponibilidad sin tabla, con dobles de ORM.
+- `[x]` `node --test scripts/pending-sale.test.cjs`: 12 pruebas correctas de escritura previa,
+  respuesta perdida/reinicio, fallo al guardar comprobante, cancelación, inicios simultáneos,
+  separación por cuenta/servidor, falta de migración y almacenamiento corrupto.
+- `[x]` `npx tsc --noEmit`: mismos 75 errores preexistentes, sin errores nuevos.
+- `[ ]` Aplicar `0040` en Railway y verificar disponibilidad autenticada.
+- `[ ]` Ejecutar los 7 nuevos casos de `store.test_inventario_integration` en PostgreSQL
+  dedicado: dos POST simultáneos con la misma clave; POST/cancelación concurrentes; respuesta
+  original con stock agotado/precio cambiado; conflicto de payload; rollback completo;
+  cancelación tras confirmación y aislamiento entre tiendas/clientes. La suite suma 22 casos.
+- `[ ]` Android: cortar la conexión tras enviar y cerrar la app. Al volver a Modo caja,
+  recuperar la misma venta, comprobar ID y que existe una sola salida de inventario.
+- `[ ]` Repetir con dos almacenes, servicios y USD/VES separados. Recuperar funciona incluso
+  si el stock ya se agotó: no depende de la validación previa de existencias de una venta nueva.
+- `[ ]` Cancelar mientras el POST está en vuelo: obtener cancelación definitiva o comprobante,
+  nunca permitir una segunda venta por descartar un resultado desconocido.
+- `[ ]` Almacenamiento sin espacio/corrupto: no enviar una venta nueva ni borrar el pendiente.
+  Fallo al limpiar un comprobante conserva el bloqueo hasta poder completar “Nueva venta”.
+- `[ ]` Cambiar de cuenta/reabrir pantalla durante una solicitud: no mostrar ni reusar datos
+  ajenos. Los reintentos se serializan por cuenta; no se persisten tokens con la operación.
+
+Para el negocio: usar **Recuperar venta** cuando el resultado sea desconocido. **Cancelar
+operación** sólo cancela intentos que no se hayan confirmado; una venta confirmada se muestra
+con su comprobante. No borrar los datos de la app ni crear otra venta desde otro dispositivo
+para resolver una operación desconocida. El alcance es una misma clave, no dos tickets
+independientes ni recuperación después de desinstalar/borrar almacenamiento local.
+
 ## Pruebas de aislamiento y permisos
 
 - `[ ]` Un usuario no puede consultar el negocio de otra tienda modificando IDs.

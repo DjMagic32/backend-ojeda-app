@@ -7,6 +7,7 @@ from io import StringIO
 import json
 from threading import Barrier
 import unittest
+from uuid import uuid4
 
 from django.conf import settings
 from django.core.management import call_command
@@ -18,6 +19,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from store.models import (
     Almacen, InventarioAlmacen, MovimientoStock, NegocioMiembro, ProductoTienda,
     StoreOrder, StoreOrderItem, Tienda, TransferenciaInventario, Usuario,
+    OperacionVentaPresencial,
 )
 from store.services.inventario import transferir_stock
 
@@ -221,6 +223,93 @@ class InventarioPostgresTests(TransactionTestCase):
         self.assertEqual(sorted(self.concurrent_posts([request, request])), [201, 400])
         self.assertEqual(StoreOrder.objects.count(), before_orders + 1)
         self.assertEqual(self.balance(self.a1), 0)
+
+    def test_reintento_idempotente_con_stock_agotado_devuelve_comprobante_original(self):
+        payload = {**self.sale_payload(10), 'clave_operacion': str(uuid4())}
+        url = '/api/store/ventas-presenciales/operaciones/'
+        first = self.client_a.post(url, payload, format='json')
+        self.assertEqual(first.status_code, 201, first.data)
+        counts = self.counts()
+        self.product.precio = '9.00'
+        self.product.save(update_fields=['precio'])
+        retry = self.client_a.post(url, payload, format='json')
+        self.assertEqual(retry.status_code, 200, retry.data)
+        self.assertTrue(retry.data['repetida'])
+        self.assertEqual(first.data['order'], retry.data['order'])
+        self.assertEqual(first.data['movimientos'], retry.data['movimientos'])
+        self.assertEqual(self.counts(), counts)
+        self.assertEqual(self.balance(self.a1), 0)
+
+    def test_dos_posts_misma_clave_crean_una_sola_venta(self):
+        payload = {**self.sale_payload(), 'clave_operacion': str(uuid4())}
+        request = ('/api/store/ventas-presenciales/operaciones/', payload)
+        before = StoreOrder.objects.count()
+        self.assertEqual(sorted(self.concurrent_posts([request, request])), [200, 201])
+        self.assertEqual(StoreOrder.objects.count(), before + 1)
+        self.assertEqual(self.balance(self.a1), 9)
+        self.assertEqual(OperacionVentaPresencial.objects.count(), 1)
+
+    def test_conflicto_clave_con_payload_distinto_no_descuenta(self):
+        payload = {**self.sale_payload(), 'clave_operacion': str(uuid4())}
+        url = '/api/store/ventas-presenciales/operaciones/'
+        self.assertEqual(self.client_a.post(url, payload, format='json').status_code, 201)
+        counts = self.counts()
+        payload['items'][0]['cantidad'] = 2
+        self.assertEqual(self.client_a.post(url, payload, format='json').status_code, 409)
+        self.assertEqual(self.counts(), counts)
+
+    def test_cancelacion_y_post_concurrentes_no_dejan_venta_duplicada(self):
+        clave = str(uuid4())
+        url = '/api/store/ventas-presenciales/operaciones/'
+        payload = {**self.sale_payload(), 'clave_operacion': clave}
+        statuses = self.concurrent_posts([(url, payload), (f'{url}{clave}/cancelar/', {})])
+        self.assertEqual(statuses[1], 200)
+        self.assertIn(statuses[0], (201, 409))
+        operation = OperacionVentaPresencial.objects.get(tienda_id=self.store_a.pk, clave=clave)
+        if operation.cancelada:
+            self.assertIsNone(operation.respuesta)
+            self.assertEqual(self.balance(self.a1), 10)
+            self.assertEqual(self.client_a.post(url, payload, format='json').status_code, 409)
+        else:
+            self.assertIsNotNone(operation.respuesta)
+            self.assertEqual(self.balance(self.a1), 9)
+            self.assertEqual(self.client_a.post(url, payload, format='json').status_code, 200)
+
+    def test_cancelar_venta_confirmada_no_la_anula(self):
+        clave = str(uuid4())
+        url = '/api/store/ventas-presenciales/operaciones/'
+        sale = self.client_a.post(url, {**self.sale_payload(), 'clave_operacion': clave}, format='json')
+        cancel = self.client_a.post(f'{url}{clave}/cancelar/', {}, format='json')
+        self.assertEqual(cancel.status_code, 200, cancel.data)
+        self.assertFalse(cancel.data['cancelada'])
+        self.assertEqual(cancel.data['resultado']['order'], sale.data['order'])
+        self.assertEqual(self.balance(self.a1), 9)
+
+    def test_fallo_de_stock_revierte_operacion_y_permite_cancelar(self):
+        clave = str(uuid4())
+        url = '/api/store/ventas-presenciales/operaciones/'
+        counts = self.counts()
+        self.assertEqual(self.client_a.post(url, {**self.sale_payload(11), 'clave_operacion': clave}, format='json').status_code, 400)
+        self.assertFalse(OperacionVentaPresencial.objects.filter(clave=clave).exists())
+        self.assertEqual(self.counts(), counts)
+        canceled = self.client_a.post(f'{url}{clave}/cancelar/', {}, format='json')
+        self.assertTrue(canceled.data['cancelada'])
+
+    def test_otra_tienda_no_recupera_ni_cancela_la_operacion_original(self):
+        clave = str(uuid4())
+        url = '/api/store/ventas-presenciales/operaciones/'
+        payload = {**self.sale_payload(), 'clave_operacion': clave}
+        sale = self.client_a.post(url, payload, format='json')
+        self.assertEqual(sale.status_code, 201, sale.data)
+        self.assertEqual(self.client_b.post(url, payload, format='json').status_code, 400)
+        cancel = self.client_b.post(f'{url}{clave}/cancelar/', {}, format='json')
+        self.assertTrue(cancel.data['cancelada'])
+        operation = OperacionVentaPresencial.objects.get(tienda_id=self.store_a.pk, clave=clave)
+        self.assertFalse(operation.cancelada)
+        self.assertEqual(operation.respuesta['order']['id'], sale.data['order']['id'])
+        for client in (APIClient(), self.client_customer):
+            self.assertIn(client.post(url, payload, format='json').status_code, (401, 403))
+            self.assertIn(client.post(f'{url}{clave}/cancelar/', {}, format='json').status_code, (401, 403))
 
     def test_deltas_simultaneos_se_acumulan(self):
         request = (self.adjustment_url(), {'delta': 1})
