@@ -33,6 +33,7 @@ from .views import (
     SucursalViewSet,
     AlmacenViewSet,
     InventarioAlmacenViewSet,
+    TransferenciaInventarioViewSet,
     ProductoFavoritoView,
     NotificacionListView,
     NotificacionMarkReadView,
@@ -58,6 +59,7 @@ router.register(r'articulos-usados', ArticuloUsadoViewSet, basename='articulos-u
 router.register(r'sucursales', SucursalViewSet, basename='sucursales')
 router.register(r'almacenes', AlmacenViewSet, basename='almacenes')
 router.register(r'inventario-almacenes', InventarioAlmacenViewSet, basename='inventario-almacenes')
+router.register(r'transferencias-inventario', TransferenciaInventarioViewSet, basename='transferencias-inventario')
 
 urlpatterns = [
     path('', include(router.urls)),

@@ -102,18 +102,21 @@ flujos actuales.
 - **App:** `[x]` pantalla de alta y desactivación accesible desde el perfil de la tienda.
 - **Operación:** `[ ]` ejecutar y probar la migración `0037_sucursal_almacen` en una base
   de datos de prueba/despliegue.
-- **Pendiente funcional:** `[~]` la asociación inicial ya está implementada en el siguiente
-  bloque; queda probarla y construir transferencias.
+- **Pendiente funcional:** `[~]` la asociación inicial y la transferencia básica ya están
+  implementadas; queda probarlas y completar recepción/controles avanzados.
 
-### Estado de implementación del tercer bloque: inventario por almacén
+### Estado de implementación del tercer bloque: inventario y transferencias
 
-- **API:** `[~]` modelo `InventarioAlmacen`, migración `0038_inventario_almacen`, endpoint
-  protegido de consulta y asociación automática de ajustes/ventas al almacén principal.
-- **App:** `[~]` resumen de productos asociados por almacén e historial con ubicación del
-  movimiento; aún falta selector operativo y transferencias desde la app.
-- **Operación:** `[ ]` ejecutar `0038_inventario_almacen` en Railway y verificar la migración.
-- **Pruebas:** `[ ]` ejecutar los casos de inventario con dos almacenes, concurrencia,
-  servicios sin stock y compatibilidad con clientes antiguos.
+- **API:** `[~]` modelo `InventarioAlmacen`, migraciones `0038_inventario_almacen` y
+  `0039_transferencia_inventario`, consulta protegida y transferencia atómica entre
+  almacenes con movimientos de salida/entrada trazables.
+- **App:** `[~]` resumen de productos asociados por almacén, historial con ubicación del
+  movimiento y pantalla para transferir existencias; queda completar selección de almacén
+  en ventas/ajustes y recepción avanzada.
+- **Operación:** `[ ]` ejecutar `0038_inventario_almacen` y `0039_transferencia_inventario`
+  en Railway y verificar las migraciones.
+- **Pruebas:** `[ ]` ejecutar los casos de inventario con dos almacenes, transferencia
+  insuficiente, concurrencia, servicios sin stock y compatibilidad con clientes antiguos.
 
 ## Pruebas de aislamiento y permisos
 

@@ -52,14 +52,16 @@ ni como afirmación independiente de sus cifras comerciales.
 
 - **API:** `[~]` se agregó `InventarioAlmacen`, la migración `0038_inventario_almacen`,
   consulta protegida por negocio en `GET /api/store/inventario-almacenes/`, asociación del
-  stock existente al almacén principal y registro de movimientos con almacén. Las ventas y
-  ajustes antiguos siguen usando automáticamente el almacén principal cuando existe.
+  stock existente al almacén principal, registro de movimientos con almacén y transferencia
+  atómica entre almacenes mediante `POST /api/store/transferencias-inventario/`. Las ventas
+  y ajustes antiguos siguen usando automáticamente el almacén principal cuando existe.
 - **App:** `[~]` la pantalla de sucursales y almacenes muestra cuántos productos están
-  asociados a cada almacén y el historial de stock muestra la sucursal/almacén del movimiento.
-  Todavía falta seleccionar el almacén explícitamente desde la operación y construir
-  transferencias.
-- **Operación:** `[ ]` falta ejecutar `0038_inventario_almacen` en Railway y validar los
-  datos reales antes de marcar el bloque como terminado.
+  asociados a cada almacén, el historial de stock muestra la sucursal/almacén del movimiento
+  y hay una pantalla para transferir existencias. Todavía falta seleccionar el almacén
+  explícitamente desde ventas/ajustes.
+- **Operación:** `[ ]` falta ejecutar `0038_inventario_almacen` y
+  `0039_transferencia_inventario` en Railway y validar los datos reales antes de marcar el
+  bloque como terminado.
 
 ## Conclusión ejecutiva
 
@@ -102,9 +104,9 @@ ERP de una tienda ni exigirles configurar una tienda para vender en el marketpla
   de aislamiento a nivel de servicio y base de datos.
 - `[ ]` Evaluar Row-Level Security (RLS) de PostgreSQL cuando el módulo sea multiempresa;
   no conviene activarlo sin antes cerrar el modelo de pertenencia y las migraciones.
-- `[~]` Crear `Sucursal` y `Almacen`: ya existe la estructura principal en API y app y el
-  inventario ya puede asociarse al almacén principal; faltan selección operativa completa y
-  transferencias entre ubicaciones.
+- `[~]` Crear `Sucursal` y `Almacen`: ya existe la estructura principal en API y app, el
+  inventario se asocia al almacén principal y la app permite transferir entre almacenes;
+  faltan recepción formal, controles avanzados y operaciones por ubicación más completas.
 - `[x]` Definir qué permanece global de TuPlaza (marketplace, usuarios, delivery) y qué
   pertenece exclusivamente al negocio (ventas internas, compras, gastos y caja).
 
@@ -141,7 +143,8 @@ el negocio y la sucursal correspondiente.
 - `[~]` Existencias por sucursal y almacén: existe el detalle transaccional, la migración del
   stock legado, asociación automática al almacén principal y consulta protegida; falta la
   operación completa por almacén desde la app.
-- `[ ]` Transferencias entre almacenes, recepción, mermas, devoluciones y conteos físicos.
+- `[~]` Transferencias entre almacenes: existe operación atómica con salida/entrada trazables
+  y pantalla de prueba; faltan recepción formal, mermas, devoluciones y conteos físicos.
 - `[ ]` Costo promedio ponderado calculado de forma transaccional.
 - `[ ]` Lotes, fechas de vencimiento, alertas y despacho FEFO para alimentos, farmacias y
   perecederos.
@@ -321,15 +324,16 @@ Reglas importantes:
 - `[x]` Confirmar que el objetivo es un módulo SaaS opcional para tiendas, no convertir a
   todos los usuarios del marketplace en empresas.
 - `[~]` Definir `Business/Tenant`, membresías, sucursales y almacenes. Ya existen en API y
-  app `Negocio`, `NegocioMiembro` y el CRUD básico de la estructura; faltan existencias
-  separadas y transferencias.
+  app `Negocio`, `NegocioMiembro`, existencias por almacén y transferencias básicas; faltan
+  controles operativos avanzados.
 - `[x]` Definir la separación entre `StoreOrder`, `Sale`, delivery y artículos C2C.
 - `[ ]` Especificar invariantes: no stock negativo, no doble cobro, no retroceso de estados,
   auditoría y permisos.
 
 ### Fase 1 — Núcleo operativo MVP
 
-- `[ ]` Catálogo con variantes, importación CSV/Excel y existencias por almacén.
+- `[ ]` Catálogo con variantes e importación CSV/Excel; las existencias por almacén ya tienen
+  una base inicial, pero falta completar su operación.
 - `[ ]` Venta/POS online y presencial unificada.
 - `[ ]` Caja con apertura, cierre, arqueo y comprobante básico.
 - `[ ]` Reservas de stock, devoluciones y movimientos auditables.

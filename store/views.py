@@ -24,6 +24,7 @@ from .models import (
     Sucursal,
     Almacen,
     InventarioAlmacen,
+    TransferenciaInventario,
     ProductoTienda,
     Comentario,
     ComentarioProducto,
@@ -71,6 +72,8 @@ from .serializers import (
     NotificacionSerializer,
     ReporteSerializer,
     InventarioAlmacenSerializer,
+    TransferenciaInventarioSerializer,
+    TransferenciaInventarioCreateSerializer,
     MovimientoStockSerializer,
     AjusteStockSerializer,
     VentaPresencialSerializer,
@@ -80,7 +83,7 @@ from .models import MovimientoStock, StoreOrderItem, ArticuloUsado
 from .permissions import EsTienda
 from .services.realtime import broadcast_chat_message, broadcast_chat_read, notify_user
 from .services.push import send_push_to_user
-from .services.inventario import registrar_movimiento
+from .services.inventario import registrar_movimiento, transferir_stock
 from .upload_validation import validate_chat_attachment, validate_image_upload
 
 
@@ -175,6 +178,71 @@ class InventarioAlmacenViewSet(viewsets.ReadOnlyModelViewSet):
         if almacen_id:
             queryset = queryset.filter(almacen_id=almacen_id)
         return queryset
+
+
+class TransferenciaInventarioViewSet(viewsets.ModelViewSet):
+    """Transferencias atómicas entre almacenes del negocio autenticado."""
+
+    permission_classes = [IsAuthenticated]
+    http_method_names = ['get', 'post', 'head', 'options']
+    queryset = TransferenciaInventario.objects.select_related(
+        'producto', 'almacen_origen', 'almacen_destino', 'creado_por'
+    )
+
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return TransferenciaInventarioCreateSerializer
+        return TransferenciaInventarioSerializer
+
+    def get_queryset(self):
+        return self.queryset.filter(
+            producto__tienda__negocio__in=_negocios_del_usuario(self.request.user)
+        )
+
+    def create(self, request, *args, **kwargs):
+        input_serializer = self.get_serializer(data=request.data)
+        input_serializer.is_valid(raise_exception=True)
+        data = input_serializer.validated_data
+        negocios = _negocios_del_usuario(request.user)
+
+        producto = (
+            ProductoTienda.objects.select_related('tienda')
+            .filter(pk=data['producto_id'], tienda__negocio__in=negocios)
+            .first()
+        )
+        if producto is None:
+            raise ValidationError('El producto no pertenece a un negocio disponible.')
+
+        almacenes = {
+            almacen.pk: almacen
+            for almacen in Almacen.objects.select_related('sucursal__negocio').filter(
+                pk__in=[data['almacen_origen_id'], data['almacen_destino_id']],
+                activo=True,
+                sucursal__activo=True,
+                sucursal__negocio__in=negocios,
+            )
+        }
+        if len(almacenes) != 2:
+            raise ValidationError('Los almacenes deben pertenecer a tu negocio y estar activos.')
+
+        origen = almacenes[data['almacen_origen_id']]
+        destino = almacenes[data['almacen_destino_id']]
+        try:
+            transferencia = transferir_stock(
+                producto=producto,
+                almacen_origen=origen,
+                almacen_destino=destino,
+                cantidad=data['cantidad'],
+                usuario=request.user,
+                notas=data.get('notas', ''),
+            )
+        except DjangoValidationError as exc:
+            raise ValidationError(exc.messages[0] if exc.messages else 'No se pudo transferir el inventario.')
+
+        return Response(
+            TransferenciaInventarioSerializer(transferencia).data,
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class CreateUserView(generics.GenericAPIView):

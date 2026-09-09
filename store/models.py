@@ -450,6 +450,48 @@ class InventarioAlmacen(models.Model):
         return f'{self.producto.nombre} · {self.almacen.nombre}: {self.cantidad}'
 
 
+class TransferenciaInventario(models.Model):
+    """Movimiento de existencias entre dos almacenes del mismo negocio."""
+
+    producto = models.ForeignKey(
+        ProductoTienda,
+        on_delete=models.CASCADE,
+        related_name='transferencias_inventario',
+    )
+    almacen_origen = models.ForeignKey(
+        Almacen,
+        on_delete=models.PROTECT,
+        related_name='transferencias_salida',
+    )
+    almacen_destino = models.ForeignKey(
+        Almacen,
+        on_delete=models.PROTECT,
+        related_name='transferencias_entrada',
+    )
+    cantidad = models.PositiveIntegerField()
+    creado_por = models.ForeignKey(
+        Usuario,
+        on_delete=models.PROTECT,
+        related_name='transferencias_inventario_creadas',
+    )
+    notas = models.TextField(blank=True, default='')
+    creado = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-creado', '-id']
+        indexes = [
+            models.Index(fields=['producto', '-creado'], name='store_transfer_product_idx'),
+            models.Index(fields=['almacen_origen', '-creado'], name='store_transfer_origin_idx'),
+            models.Index(fields=['almacen_destino', '-creado'], name='store_transfer_dest_idx'),
+        ]
+
+    def __str__(self):
+        return (
+            f'Transferencia #{self.id}: {self.producto.nombre} '
+            f'{self.almacen_origen.nombre} → {self.almacen_destino.nombre}'
+        )
+
+
 class StoreOrder(models.Model):
     ESTADO_PENDIENTE = 'pending'
     ESTADO_EN_CURSO = 'ongoing'
@@ -1154,21 +1196,25 @@ class MovimientoStock(models.Model):
     TIPO_ENTRADA = 'entrada'
     TIPO_VENTA = 'venta'
     TIPO_AJUSTE = 'ajuste'
+    TIPO_TRANSFERENCIA = 'transferencia'
     TIPOS = [
         (TIPO_ENTRADA, 'Entrada'),
         (TIPO_VENTA, 'Venta'),
         (TIPO_AJUSTE, 'Ajuste'),
+        (TIPO_TRANSFERENCIA, 'Transferencia'),
     ]
 
     ORIGEN_VENTA_PRESENCIAL = 'venta_presencial'
     ORIGEN_ORDEN_ONLINE = 'orden_online'
     ORIGEN_AJUSTE_MANUAL = 'ajuste_manual'
     ORIGEN_CREACION = 'creacion'
+    ORIGEN_TRANSFERENCIA = 'transferencia'
     ORIGENES = [
         (ORIGEN_VENTA_PRESENCIAL, 'Venta presencial'),
         (ORIGEN_ORDEN_ONLINE, 'Orden en línea'),
         (ORIGEN_AJUSTE_MANUAL, 'Ajuste manual'),
         (ORIGEN_CREACION, 'Creación de producto'),
+        (ORIGEN_TRANSFERENCIA, 'Transferencia entre almacenes'),
     ]
 
     producto = models.ForeignKey(ProductoTienda, on_delete=models.CASCADE, related_name='movimientos_stock')
@@ -1179,7 +1225,14 @@ class MovimientoStock(models.Model):
         blank=True,
         related_name='movimientos_stock',
     )
-    tipo = models.CharField(max_length=10, choices=TIPOS)
+    transferencia = models.ForeignKey(
+        'TransferenciaInventario',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='movimientos_stock',
+    )
+    tipo = models.CharField(max_length=15, choices=TIPOS)
     cantidad = models.IntegerField(help_text='Delta con signo: las ventas son negativas.')
     stock_resultante = models.PositiveIntegerField(null=True, blank=True)
     stock_almacen_resultante = models.PositiveIntegerField(null=True, blank=True)

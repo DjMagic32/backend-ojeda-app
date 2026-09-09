@@ -34,6 +34,7 @@ from .models import (
     Reporte,
     InventarioAlmacen,
     MovimientoStock,
+    TransferenciaInventario,
     ArticuloUsado,
 )
 from .upload_validation import validate_image_upload
@@ -738,6 +739,7 @@ class MovimientoStockSerializer(serializers.ModelSerializer):
             'almacen',
             'almacen_nombre',
             'sucursal_nombre',
+            'transferencia',
             'tipo',
             'cantidad',
             'stock_resultante',
@@ -771,6 +773,39 @@ class InventarioAlmacenSerializer(serializers.ModelSerializer):
             'actualizado',
         ]
         read_only_fields = fields
+
+
+class TransferenciaInventarioSerializer(serializers.ModelSerializer):
+    producto_nombre = serializers.CharField(source='producto.nombre', read_only=True)
+    almacen_origen_nombre = serializers.CharField(source='almacen_origen.nombre', read_only=True)
+    almacen_destino_nombre = serializers.CharField(source='almacen_destino.nombre', read_only=True)
+    creado_por_email = serializers.EmailField(source='creado_por.email', read_only=True)
+
+    class Meta:
+        model = TransferenciaInventario
+        fields = [
+            'id',
+            'producto',
+            'producto_nombre',
+            'almacen_origen',
+            'almacen_origen_nombre',
+            'almacen_destino',
+            'almacen_destino_nombre',
+            'cantidad',
+            'creado_por',
+            'creado_por_email',
+            'notas',
+            'creado',
+        ]
+        read_only_fields = fields
+
+
+class TransferenciaInventarioCreateSerializer(serializers.Serializer):
+    producto_id = serializers.IntegerField(min_value=1)
+    almacen_origen_id = serializers.IntegerField(min_value=1)
+    almacen_destino_id = serializers.IntegerField(min_value=1)
+    cantidad = serializers.IntegerField(min_value=1)
+    notas = serializers.CharField(required=False, allow_blank=True)
 
 
 class AjusteStockSerializer(serializers.Serializer):
