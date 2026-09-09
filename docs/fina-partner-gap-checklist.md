@@ -160,9 +160,10 @@ los reintentos de red. Las reservas y la sesión de caja siguen pendientes.
   migraciones. Consulta discrepancias entre total y detalle y existencias de otro negocio.
   Sólo muestra conteos y una muestra limitada de IDs. No migra ni repara datos y no se
   incorpora al arranque. Falta ejecutarlo con acceso al servicio.
-- **Despliegue:** `[~]` la respuesta de salud agrega `revision` a partir de un SHA válido de
+- **Despliegue:** `[x]` la respuesta de salud agrega `revision` a partir de un SHA válido de
   `RAILWAY_GIT_COMMIT_SHA`; si Railway no lo proporciona, responde `null`. El smoke admite
   `--expected-revision` para exigir coincidencia, además de verificar las rutas protegidas.
+  Railway confirmó `7d5b8e6` y el smoke con SHA completo pasó sus ocho casos.
 - **Integración:** `[~]` 15 casos preparados en `store/test_inventario_integration.py`:
   REST con JWT, dos negocios, cliente, miembro desactivado, almacenes, servicios, rollback,
   líneas repetidas, cuatro escenarios de concurrencia y diagnóstico sin reparación.

@@ -252,6 +252,9 @@ Bases revisadas: backend `2b133cc`, frontend `adb8a23`, ambos limpios en `dev`.
   nombre separado de base de pruebas y publicación exclusiva de revisiones válidas.
 - `[x]` `npx tsc --noEmit`: frontend sin cambios y salida idéntica a la anterior, con los
   mismos 75 errores preexistentes.
+- `[x]` Railway confirmó la revisión `7d5b8e69090bcfc897c4f34a6ea20d0b16081951` después
+  del push. El smoke con `--expected-revision` pasó sus ocho rutas; esto acredita el código
+  desplegado y el rechazo anónimo, no el diagnóstico SQL ni los casos autenticados.
 - `[ ]` Ejecutar `diagnostico_inventario` en Railway y guardar su informe sanitizado.
 - `[ ]` Ejecutar los 15 casos de `store.test_inventario_integration` contra PostgreSQL QA.
 - `[ ]` Usar cuentas QA para la prueba visual en Android y revisar logs del 502 anterior.
