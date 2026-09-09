@@ -20,6 +20,9 @@ from .models import (
     Message,
     Pedido,
     Tienda,
+    Negocio,
+    Sucursal,
+    Almacen,
     ProductoTienda,
     Comentario,
     ComentarioProducto,
@@ -46,6 +49,9 @@ from .serializers import (
     TasaCambioSerializer,
     TiendaSerializer,
     TiendaPublicSerializer,
+    NegocioSerializer,
+    SucursalSerializer,
+    AlmacenSerializer,
     ProductoTiendaSerializer,
     ComentarioSerializer,
     ComentarioProductoSerializer,
@@ -74,6 +80,77 @@ from .services.realtime import broadcast_chat_message, broadcast_chat_read, noti
 from .services.push import send_push_to_user
 from .services.inventario import registrar_movimiento
 from .upload_validation import validate_chat_attachment, validate_image_upload
+
+
+def _negocios_del_usuario(user):
+    """Negocios donde el usuario es propietario o miembro activo."""
+    if getattr(user, 'is_staff', False):
+        return Negocio.objects.all()
+    return Negocio.objects.filter(
+        Q(tienda__usuario=user)
+        | Q(miembros__usuario=user, miembros__activo=True)
+    ).distinct()
+
+
+class SucursalViewSet(viewsets.ModelViewSet):
+    """CRUD protegido de sucursales del negocio del usuario autenticado."""
+
+    serializer_class = SucursalSerializer
+    permission_classes = [IsAuthenticated]
+    http_method_names = ['get', 'post', 'patch', 'head', 'options']
+    queryset = Sucursal.objects.select_related('negocio').prefetch_related('almacenes')
+
+    def get_queryset(self):
+        return self.queryset.filter(negocio__in=_negocios_del_usuario(self.request.user))
+
+    def perform_create(self, serializer):
+        negocio = _negocios_del_usuario(self.request.user).first()
+        if negocio is None:
+            raise ValidationError('El usuario no pertenece a un negocio.')
+        try:
+            serializer.save(negocio=negocio)
+        except IntegrityError as exc:
+            raise ValidationError('Ya existe una sucursal con ese código.') from exc
+
+    def perform_update(self, serializer):
+        try:
+            serializer.save()
+        except IntegrityError as exc:
+            raise ValidationError('Ya existe una sucursal con ese código.') from exc
+
+
+class AlmacenViewSet(viewsets.ModelViewSet):
+    """CRUD protegido de almacenes pertenecientes a sucursales propias."""
+
+    serializer_class = AlmacenSerializer
+    permission_classes = [IsAuthenticated]
+    http_method_names = ['get', 'post', 'patch', 'head', 'options']
+    queryset = Almacen.objects.select_related('sucursal', 'sucursal__negocio')
+
+    def get_queryset(self):
+        return self.queryset.filter(
+            sucursal__negocio__in=_negocios_del_usuario(self.request.user)
+        )
+
+    def perform_create(self, serializer):
+        sucursal = serializer.validated_data['sucursal']
+        if not _negocios_del_usuario(self.request.user).filter(pk=sucursal.negocio_id).exists():
+            raise ValidationError('La sucursal no pertenece a tu negocio.')
+        try:
+            serializer.save()
+        except IntegrityError as exc:
+            raise ValidationError('Ya existe un almacén con ese código en la sucursal.') from exc
+
+    def perform_update(self, serializer):
+        sucursal = serializer.validated_data.get('sucursal')
+        if sucursal is not None and not _negocios_del_usuario(self.request.user).filter(
+            pk=sucursal.negocio_id
+        ).exists():
+            raise ValidationError('La sucursal no pertenece a tu negocio.')
+        try:
+            serializer.save()
+        except IntegrityError as exc:
+            raise ValidationError('Ya existe un almacén con ese código en la sucursal.') from exc
 
 
 class CreateUserView(generics.GenericAPIView):
@@ -756,6 +833,31 @@ class MiTiendaView(generics.GenericAPIView):
         serializer.is_valid(raise_exception=True)
         serializer.save(usuario=request.user)
         return Response(serializer.data)
+
+
+class MiNegocioView(generics.GenericAPIView):
+    """Devuelve el contexto administrativo del negocio del usuario autenticado."""
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = NegocioSerializer
+
+    def get(self, request):
+        negocio = (
+            Negocio.objects.select_related('tienda')
+            .prefetch_related('miembros__usuario', 'sucursales__almacenes')
+            .filter(
+                Q(tienda__usuario=request.user)
+                | Q(miembros__usuario=request.user, miembros__activo=True)
+            )
+            .distinct()
+            .first()
+        )
+        if negocio is None:
+            return Response(
+                {'error': 'El usuario no pertenece a un negocio.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        return Response(self.get_serializer(negocio).data)
 
 
 class ComentarioViewSet(viewsets.ModelViewSet):

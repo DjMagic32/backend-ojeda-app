@@ -15,6 +15,10 @@ from .models import (
     Message,
     Pedido,
     Tienda,
+    Negocio,
+    NegocioMiembro,
+    Sucursal,
+    Almacen,
     ProductoTienda,
     Comentario,
     ComentarioProducto,
@@ -218,6 +222,110 @@ class TiendaPublicSerializer(serializers.ModelSerializer):
             'ubicacion_actualizada',
             'verificada',
             'creado',
+        ]
+        read_only_fields = fields
+
+
+class NegocioMiembroSerializer(serializers.ModelSerializer):
+    usuario_nombre = serializers.SerializerMethodField()
+    usuario_email = serializers.EmailField(source='usuario.email', read_only=True)
+
+    class Meta:
+        model = NegocioMiembro
+        fields = [
+            'id',
+            'usuario',
+            'usuario_nombre',
+            'usuario_email',
+            'rol',
+            'activo',
+            'creado',
+        ]
+        read_only_fields = fields
+
+    def get_usuario_nombre(self, obj):
+        nombre = obj.usuario.get_full_name().strip()
+        return nombre or obj.usuario.username
+
+
+class AlmacenSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Almacen
+        fields = [
+            'id',
+            'sucursal',
+            'nombre',
+            'codigo',
+            'activo',
+            'creado',
+            'actualizado',
+        ]
+        read_only_fields = ['id', 'creado', 'actualizado']
+
+    def validate_nombre(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError('El nombre del almacén es requerido.')
+        return value
+
+    def validate_codigo(self, value):
+        value = value.strip().upper()
+        if not value:
+            raise serializers.ValidationError('El código del almacén es requerido.')
+        return value
+
+
+class SucursalSerializer(serializers.ModelSerializer):
+    almacenes = AlmacenSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Sucursal
+        fields = [
+            'id',
+            'negocio',
+            'nombre',
+            'codigo',
+            'direccion',
+            'activo',
+            'almacenes',
+            'creado',
+            'actualizado',
+        ]
+        read_only_fields = ['id', 'negocio', 'almacenes', 'creado', 'actualizado']
+
+    def validate_nombre(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError('El nombre de la sucursal es requerido.')
+        return value
+
+    def validate_codigo(self, value):
+        value = value.strip().upper()
+        if not value:
+            raise serializers.ValidationError('El código de la sucursal es requerido.')
+        return value
+
+    def validate_direccion(self, value):
+        return value.strip()
+
+
+class NegocioSerializer(serializers.ModelSerializer):
+    tienda_nombre = serializers.CharField(source='tienda.nombre', read_only=True)
+    miembros = NegocioMiembroSerializer(many=True, read_only=True)
+    sucursales = SucursalSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Negocio
+        fields = [
+            'id',
+            'tienda',
+            'tienda_nombre',
+            'nombre_legal',
+            'activo',
+            'miembros',
+            'sucursales',
+            'creado',
+            'actualizado',
         ]
         read_only_fields = fields
 

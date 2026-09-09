@@ -236,6 +236,125 @@ class TiendaNombreHistorial(models.Model):
     def __str__(self):
         return f'{self.tienda_id}: {self.nombre}'
 
+
+class Negocio(models.Model):
+    """Identidad administrativa de una tienda dentro del futuro módulo empresarial.
+
+    ``Tienda`` continúa siendo la entidad pública del marketplace. ``Negocio`` será
+    el propietario lógico de ventas internas, inventario, caja y demás módulos
+    administrativos, permitiendo agregar miembros y sucursales sin convertir a cada
+    vendedor ocasional en una tienda.
+    """
+
+    tienda = models.OneToOneField(
+        Tienda,
+        on_delete=models.CASCADE,
+        related_name='negocio',
+    )
+    nombre_legal = models.CharField(max_length=200, blank=True, default='')
+    activo = models.BooleanField(default=True)
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.nombre_legal or self.tienda.nombre
+
+
+class NegocioMiembro(models.Model):
+    """Usuario autorizado a operar el módulo administrativo de un negocio."""
+
+    ROL_PROPIETARIO = 'owner'
+    ROL_ADMINISTRADOR = 'admin'
+    ROLES = [
+        (ROL_PROPIETARIO, 'Propietario'),
+        (ROL_ADMINISTRADOR, 'Administrador'),
+    ]
+
+    negocio = models.ForeignKey(
+        Negocio,
+        on_delete=models.CASCADE,
+        related_name='miembros',
+    )
+    usuario = models.ForeignKey(
+        Usuario,
+        on_delete=models.CASCADE,
+        related_name='membresias_negocio',
+    )
+    rol = models.CharField(max_length=20, choices=ROLES, default=ROL_ADMINISTRADOR)
+    activo = models.BooleanField(default=True)
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['negocio', 'usuario'],
+                name='unique_miembro_por_negocio',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['usuario', 'activo'], name='store_member_user_active_idx'),
+        ]
+
+    def __str__(self):
+        return f'{self.usuario.email} en {self.negocio}'
+
+
+class Sucursal(models.Model):
+    """Ubicación operativa de un negocio."""
+
+    negocio = models.ForeignKey(
+        Negocio,
+        on_delete=models.CASCADE,
+        related_name='sucursales',
+    )
+    nombre = models.CharField(max_length=120)
+    codigo = models.CharField(max_length=30)
+    direccion = models.TextField(blank=True, default='')
+    activo = models.BooleanField(default=True)
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['negocio', 'codigo'],
+                name='unique_codigo_sucursal_por_negocio',
+            ),
+        ]
+        ordering = ['nombre', 'id']
+
+    def __str__(self):
+        return f'{self.negocio}: {self.nombre}'
+
+
+class Almacen(models.Model):
+    """Lugar de inventario dentro de una sucursal."""
+
+    sucursal = models.ForeignKey(
+        Sucursal,
+        on_delete=models.CASCADE,
+        related_name='almacenes',
+    )
+    nombre = models.CharField(max_length=120)
+    codigo = models.CharField(max_length=30)
+    activo = models.BooleanField(default=True)
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['sucursal', 'codigo'],
+                name='unique_codigo_almacen_por_sucursal',
+            ),
+        ]
+        ordering = ['nombre', 'id']
+
+    def __str__(self):
+        return f'{self.sucursal}: {self.nombre}'
+
+
 MONEDA_USD = 'USD'
 MONEDA_VES = 'VES'
 MONEDAS = [

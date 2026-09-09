@@ -26,8 +26,12 @@ from .models import (
     Wallet,
     DriverProfile,
     Lugar,
+    Negocio,
+    NegocioMiembro,
     ServiceRequest,
     ArticuloUsado,
+    Almacen,
+    Sucursal,
 )
 from .analytics.predicciones import realizar_predicciones
 from django.contrib import messages
@@ -45,6 +49,30 @@ class TiendaAdmin(admin.ModelAdmin):
     search_fields = ('nombre', 'usuario__username')
     list_filter = ('verificada', 'creado')
     list_editable = ('verificada',)
+
+@admin.register(Negocio)
+class NegocioAdmin(admin.ModelAdmin):
+    list_display = ('nombre_legal', 'tienda', 'activo', 'creado', 'actualizado')
+    search_fields = ('nombre_legal', 'tienda__nombre')
+    list_filter = ('activo', 'creado')
+
+@admin.register(NegocioMiembro)
+class NegocioMiembroAdmin(admin.ModelAdmin):
+    list_display = ('negocio', 'usuario', 'rol', 'activo', 'creado')
+    search_fields = ('negocio__nombre_legal', 'negocio__tienda__nombre', 'usuario__email')
+    list_filter = ('rol', 'activo', 'creado')
+
+@admin.register(Sucursal)
+class SucursalAdmin(admin.ModelAdmin):
+    list_display = ('nombre', 'codigo', 'negocio', 'activo', 'creado')
+    search_fields = ('nombre', 'codigo', 'negocio__nombre_legal', 'negocio__tienda__nombre')
+    list_filter = ('activo', 'creado')
+
+@admin.register(Almacen)
+class AlmacenAdmin(admin.ModelAdmin):
+    list_display = ('nombre', 'codigo', 'sucursal', 'activo', 'creado')
+    search_fields = ('nombre', 'codigo', 'sucursal__nombre', 'sucursal__negocio__nombre_legal')
+    list_filter = ('activo', 'creado')
 
 @admin.register(ProductoTienda)
 class ProductoTiendaAdmin(admin.ModelAdmin):

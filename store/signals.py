@@ -5,9 +5,14 @@ from .models import (
     Carrito,
     DriverProfile,
     MovimientoStock,
+    Negocio,
+    NegocioMiembro,
     Notificacion,
     ProductoTienda,
+    Almacen,
+    Sucursal,
     StoreOrder,
+    Tienda,
     Usuario,
     Wallet,
 )
@@ -20,6 +25,44 @@ def crear_wallet_y_carrito(sender, instance, created, **kwargs):
     if created:
         Wallet.objects.get_or_create(usuario=instance)
         Carrito.objects.get_or_create(usuario=instance)
+
+
+@receiver(post_save, sender=Tienda)
+def crear_negocio_y_propietario(sender, instance: Tienda, created, **kwargs):
+    """Crea el contexto administrativo al registrar una nueva tienda."""
+    if not created:
+        return
+
+    negocio, _ = Negocio.objects.get_or_create(
+        tienda=instance,
+        defaults={'nombre_legal': instance.nombre},
+    )
+    NegocioMiembro.objects.get_or_create(
+        negocio=negocio,
+        usuario=instance.usuario,
+        defaults={'rol': NegocioMiembro.ROL_PROPIETARIO},
+    )
+
+
+@receiver(post_save, sender=Negocio)
+def crear_estructura_principal(sender, instance: Negocio, created, **kwargs):
+    """Deja lista una ubicación inicial sin obligar a configurar almacenes aún."""
+    if not created:
+        return
+
+    sucursal, _ = Sucursal.objects.get_or_create(
+        negocio=instance,
+        codigo='PRINCIPAL',
+        defaults={
+            'nombre': 'Principal',
+            'direccion': instance.tienda.direccion or '',
+        },
+    )
+    Almacen.objects.get_or_create(
+        sucursal=sucursal,
+        codigo='PRINCIPAL',
+        defaults={'nombre': 'Almacén principal'},
+    )
 
 
 @receiver(post_save, sender=Notificacion)

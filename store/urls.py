@@ -29,6 +29,9 @@ from .views import (
     UsuarioProfileUpdateView,
     StoreOrderViewSet,
     MiTiendaView,
+    MiNegocioView,
+    SucursalViewSet,
+    AlmacenViewSet,
     ProductoFavoritoView,
     NotificacionListView,
     NotificacionMarkReadView,
@@ -51,6 +54,8 @@ router.register(r'referencias', ReferenciaViewSet)
 router.register(r'wallets', WalletViewSet)
 router.register(r'conversations', ConversationViewSet, basename='conversations')
 router.register(r'articulos-usados', ArticuloUsadoViewSet, basename='articulos-usados')
+router.register(r'sucursales', SucursalViewSet, basename='sucursales')
+router.register(r'almacenes', AlmacenViewSet, basename='almacenes')
 
 urlpatterns = [
     path('', include(router.urls)),
@@ -63,6 +68,7 @@ urlpatterns = [
     path('usuario-detalle/', UsuarioDetalleView.as_view(), name='usuario-detalle'),
     path('usuario-perfil/', UsuarioProfileUpdateView.as_view(), name='usuario-perfil'),
     path('mi-tienda/', MiTiendaView.as_view(), name='mi-tienda'),
+    path('mi-negocio/', MiNegocioView.as_view(), name='mi-negocio'),
     path('favoritos/', ProductoFavoritoView.as_view(), name='favoritos'),
     path('notificaciones/', NotificacionListView.as_view(), name='notificaciones'),
     path('notificaciones/unread-count/', NotificacionUnreadCountView.as_view(), name='notificaciones-unread-count'),
