@@ -136,8 +136,6 @@ flujos actuales.
 - `[ ]` Una orden pendiente reserva stock sólo durante el tiempo definido.
 - `[ ]` Cancelar una orden libera la reserva correctamente.
 - `[ ]` Completar una orden descuenta una sola vez.
-- `[ ]` Una reserva vencida deja de bloquear stock y no permite completar la orden sin una
-  nueva reserva.
 - `[ ]` Devolver una venta crea un movimiento inverso auditable.
 - `[ ]` Un servicio no descuenta inventario.
 - `[ ]` Una transferencia conserva cantidades y trazabilidad en origen/destino.

@@ -152,14 +152,11 @@ el negocio y la sucursal correspondiente.
 - `[x]` Ajustes manuales y movimientos de stock asociados a ventas presenciales y órdenes.
 - `[x]` Consulta de movimientos y validación para evitar stock negativo en las operaciones
   actuales.
-- `[~]` Reservas de inventario para órdenes online: `ReservaInventario` aparta stock de
-  forma atómica durante 30 minutos, se libera al cancelar y se consume una sola vez al
-  completar. Falta probar concurrencia y decidir si una reserva vencida debe cancelar la
-  orden automáticamente.
+- `[~]` Reservas de inventario para órdenes online: existe el flujo de pedido, pero debemos
+  definir una reserva con vencimiento para evitar vender dos veces la misma existencia.
 - `[~]` Existencias por sucursal y almacén: existe el detalle transaccional, la migración del
-  stock legado, asociación automática al almacén principal, consulta protegida y selección
-  desde la app; falta recepción formal, controles avanzados y operaciones por ubicación más
-  completas.
+  stock legado, asociación automática al almacén principal y consulta protegida; falta la
+  operación completa por almacén desde la app.
 - `[~]` Transferencias entre almacenes: existe operación atómica con salida/entrada trazables
   y pantalla de prueba; faltan recepción formal, mermas, devoluciones y conteos físicos.
 - `[ ]` Costo promedio ponderado calculado de forma transaccional.

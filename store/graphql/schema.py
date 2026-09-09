@@ -9,11 +9,10 @@ from graphene import Enum
 from graphql import GraphQLError
 from django.conf import settings
 from django.contrib.auth import authenticate
-from django.core.exceptions import ValidationError as DjangoValidationError
 from django.contrib.auth.password_validation import validate_password
 from store.services.mail import send_app_email
 from django.db import transaction
-from django.db.models import Avg, Q, QuerySet
+from django.db.models import Avg, Q, QuerySet, Sum
 from django.utils import timezone
 from django.utils.crypto import get_random_string
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -61,7 +60,6 @@ from store.services.mapbox import (
 )
 from store.services.pricing import calcular_costo_delivery, haversine_metros
 from store.services.openstreetmap_places import buscar_lugares_openstreetmap
-from store.services.inventario import consumir_reservas_orden, liberar_reservas_orden, reservar_stock_orden
 
 
 class ProductScopeEnum(Enum):
@@ -659,6 +657,35 @@ class Login(graphene.Mutation):
         return Login(access_token=access_token, refresh_token=refresh_token, user=user)
 
 
+def _validar_stock_producto(producto: ProductoTienda, cantidad: int) -> None:
+    if (
+        producto.tipo == ProductoTienda.TIPO_PRODUCTO
+        and producto.stock is not None
+        and not producto.permite_encargo
+    ):
+        comprometido = (
+            StoreOrderItem.objects.filter(
+                producto=producto,
+                order__estado__in=[
+                    StoreOrder.ESTADO_PENDIENTE,
+                    StoreOrder.ESTADO_EN_CURSO,
+                ],
+            ).aggregate(total=Sum('cantidad'))['total']
+            or 0
+        )
+        disponible = max(producto.stock - comprometido, 0)
+        if cantidad > disponible:
+            if disponible == 0:
+                raise GraphQLError(
+                    f"'{producto.nombre}' no tiene stock disponible por ahora. "
+                    "La tienda no acepta pedidos por encargo para este producto."
+                )
+            raise GraphQLError(
+                f"Stock insuficiente de '{producto.nombre}': solo quedan "
+                f"{disponible} unidad(es) disponibles."
+            )
+
+
 class CreateStoreOrder(graphene.Mutation):
     class Arguments:
         producto_id = graphene.ID(required=True)
@@ -689,36 +716,32 @@ class CreateStoreOrder(graphene.Mutation):
         except ProductoTienda.DoesNotExist as exc:
             raise GraphQLError("Producto no encontrado") from exc
 
+        _validar_stock_producto(producto, cantidad)
+
         precio_unitario: Decimal = producto.precio
         total = precio_unitario * Decimal(cantidad)
         tasa = TasaCambio.vigente()
 
-        try:
-            with transaction.atomic():
-                order = StoreOrder.objects.create(
-                    usuario=user,
-                    producto=producto,
-                    cantidad=cantidad,
-                    precio_unitario=precio_unitario,
-                    total=total,
-                    moneda=producto.moneda,
-                    tasa_aplicada=tasa.valor_bs if tasa else None,
-                    estado=StoreOrder.ESTADO_PENDIENTE,
-                    direccion_entrega=direccion_entrega,
-                    notas=notas,
-                )
-                StoreOrderItem.objects.create(
-                    order=order,
-                    producto=producto,
-                    cantidad=cantidad,
-                    precio_unitario=precio_unitario,
-                    subtotal=total,
-                )
-                reservar_stock_orden(order)
-        except DjangoValidationError as exc:
-            raise GraphQLError(
-                exc.messages[0] if exc.messages else 'No se pudo reservar el inventario.'
-            ) from exc
+        with transaction.atomic():
+            order = StoreOrder.objects.create(
+                usuario=user,
+                producto=producto,
+                cantidad=cantidad,
+                precio_unitario=precio_unitario,
+                total=total,
+                moneda=producto.moneda,
+                tasa_aplicada=tasa.valor_bs if tasa else None,
+                estado=StoreOrder.ESTADO_PENDIENTE,
+                direccion_entrega=direccion_entrega,
+                notas=notas,
+            )
+            StoreOrderItem.objects.create(
+                order=order,
+                producto=producto,
+                cantidad=cantidad,
+                precio_unitario=precio_unitario,
+                subtotal=total,
+            )
 
         return CreateStoreOrder(order=order)
 
@@ -751,6 +774,9 @@ class CheckoutCart(graphene.Mutation):
         if not items:
             raise GraphQLError("Tu carrito está vacío")
 
+        for item in items:
+            _validar_stock_producto(item.producto_tienda, item.cantidad)
+
         tasa = TasaCambio.vigente()
 
         # Una orden por combinación tienda+moneda: cada tienda cobra y
@@ -761,42 +787,36 @@ class CheckoutCart(graphene.Mutation):
             grupos.setdefault(clave, []).append(item)
 
         orders = []
-        try:
-            with transaction.atomic():
-                for (_tienda_id, moneda), grupo in sorted(grupos.items(), key=lambda entry: entry[0]):
-                    total = sum(
-                        (item.producto_tienda.precio * item.cantidad for item in grupo),
-                        Decimal('0'),
+        with transaction.atomic():
+            for (_tienda_id, moneda), grupo in grupos.items():
+                total = sum(
+                    (item.producto_tienda.precio * item.cantidad for item in grupo),
+                    Decimal('0'),
+                )
+                order = StoreOrder.objects.create(
+                    usuario=user,
+                    producto=grupo[0].producto_tienda,
+                    cantidad=sum(item.cantidad for item in grupo),
+                    precio_unitario=grupo[0].producto_tienda.precio,
+                    total=total,
+                    moneda=moneda,
+                    tasa_aplicada=tasa.valor_bs if tasa else None,
+                    estado=StoreOrder.ESTADO_PENDIENTE,
+                    direccion_entrega=direccion_entrega,
+                    notas=notas,
+                )
+                StoreOrderItem.objects.bulk_create(
+                    StoreOrderItem(
+                        order=order,
+                        producto=item.producto_tienda,
+                        cantidad=item.cantidad,
+                        precio_unitario=item.producto_tienda.precio,
+                        subtotal=item.producto_tienda.precio * item.cantidad,
                     )
-                    order = StoreOrder.objects.create(
-                        usuario=user,
-                        producto=grupo[0].producto_tienda,
-                        cantidad=sum(item.cantidad for item in grupo),
-                        precio_unitario=grupo[0].producto_tienda.precio,
-                        total=total,
-                        moneda=moneda,
-                        tasa_aplicada=tasa.valor_bs if tasa else None,
-                        estado=StoreOrder.ESTADO_PENDIENTE,
-                        direccion_entrega=direccion_entrega,
-                        notas=notas,
-                    )
-                    StoreOrderItem.objects.bulk_create(
-                        StoreOrderItem(
-                            order=order,
-                            producto=item.producto_tienda,
-                            cantidad=item.cantidad,
-                            precio_unitario=item.producto_tienda.precio,
-                            subtotal=item.producto_tienda.precio * item.cantidad,
-                        )
-                        for item in grupo
-                    )
-                    reservar_stock_orden(order)
-                    orders.append(order)
-                carrito.items.all().delete()
-        except DjangoValidationError as exc:
-            raise GraphQLError(
-                exc.messages[0] if exc.messages else 'No se pudo reservar el inventario.'
-            ) from exc
+                    for item in grupo
+                )
+                orders.append(order)
+            carrito.items.all().delete()
 
         return CheckoutCart(orders=orders)
 
@@ -848,18 +868,8 @@ class UpdateStoreOrderStatus(graphene.Mutation):
                 "Una orden completada o cancelada no puede cambiar de estado"
             )
 
-        try:
-            with transaction.atomic():
-                if normalized_status == StoreOrder.ESTADO_COMPLETADO:
-                    consumir_reservas_orden(order)
-                elif normalized_status == StoreOrder.ESTADO_CANCELADO:
-                    liberar_reservas_orden(order)
-                order.estado = normalized_status
-                order.save(update_fields=["estado", "actualizado"])
-        except DjangoValidationError as exc:
-            raise GraphQLError(
-                exc.messages[0] if exc.messages else 'No se pudo actualizar el inventario de la orden.'
-            ) from exc
+        order.estado = normalized_status
+        order.save(update_fields=["estado", "actualizado"])
         return UpdateStoreOrderStatus(order=order)
 
 
