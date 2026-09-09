@@ -152,6 +152,34 @@ Su migración queda pendiente de resolver la comparación completa de modelos y 
 de migraciones. Los bloqueos de botones y las transacciones de este paso **no** hacen seguros
 los reintentos de red. Las reservas y la sesión de caja siguen pendientes.
 
+### Séptimo paso: diagnóstico y suite PostgreSQL preparados (2026-09-09)
+
+- **Diagnóstico:** `[~]` comando `diagnostico_inventario` preparado para Railway. Usa una
+  transacción PostgreSQL `REPEATABLE READ, READ ONLY`, informa migraciones pendientes,
+  conflictos y diferencias de los modelos de `store` contra el estado completo de sus
+  migraciones. Consulta discrepancias entre total y detalle y existencias de otro negocio.
+  Sólo muestra conteos y una muestra limitada de IDs. No migra ni repara datos y no se
+  incorpora al arranque. Falta ejecutarlo con acceso al servicio.
+- **Despliegue:** `[~]` la respuesta de salud agrega `revision` a partir de un SHA válido de
+  `RAILWAY_GIT_COMMIT_SHA`; si Railway no lo proporciona, responde `null`. El smoke admite
+  `--expected-revision` para exigir coincidencia, además de verificar las rutas protegidas.
+- **Integración:** `[~]` 15 casos preparados en `store/test_inventario_integration.py`:
+  REST con JWT, dos negocios, cliente, miembro desactivado, almacenes, servicios, rollback,
+  líneas repetidas, cuatro escenarios de concurrencia y diagnóstico sin reparación.
+  **No ejecutados:** todavía no hay PostgreSQL QA ni acceso a Railway en esta sesión.
+- **Aislamiento de pruebas:** `[~]` configuración separada que exige
+  `TUPLAZA_TEST_DATABASE_URL`, acepta sólo bases `tuplaza_qa_<nombre>` y pide al runner
+  crear `test_tuplaza_qa_<nombre>`. No usa `DATABASE_URL` como alternativa. Push desactivado,
+  canales/caché en memoria y correo de pruebas. Los fixtures crean sus propias cuentas.
+  Las pruebas visuales en Android siguen necesitando cuentas de un entorno QA accesible.
+- **Verificación local:** `[x]` `py_compile` de todos los Python tocados y 34 pruebas locales
+  aprobadas (27 anteriores + 7 de configuración/revisión). Son distintas de los 15 casos
+  de integración que siguen pendientes. Frontend sin cambios: mismos 75 errores TypeScript.
+
+La falta de acceso y entorno de pruebas impide cerrar la validación funcional real y el
+diagnóstico del 502. Se preparó la ejecución reproducible; no se corrigieron migraciones,
+no se modificó inventario operativo y no se activaron reservas ni idempotencia.
+
 ## Conclusión ejecutiva
 
 Sí, podemos hacerlo, pero Fina Partner y TuPlaza parten de productos distintos:

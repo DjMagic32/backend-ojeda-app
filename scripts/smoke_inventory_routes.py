@@ -3,14 +3,18 @@
 Uso: python3 scripts/smoke_inventory_routes.py https://host-de-la-api
 Sólo comprueba disponibilidad y rechazo de solicitudes anónimas.
 """
+import argparse
 import json
-import sys
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 
 def main():
-    base = sys.argv[1].rstrip('/')
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('base_url')
+    parser.add_argument('--expected-revision', help='SHA completo esperado en Railway.')
+    args = parser.parse_args()
+    base = args.base_url.rstrip('/')
     cases = [
         ('GET', '/', 200),
         ('GET', '/api/store/mi-negocio/', 401),
@@ -37,6 +41,10 @@ def main():
             raise SystemExit('Falló el smoke de inventario.')
         if path == '/' and body.get('status') != 'ok':
             raise SystemExit('La API no indica estado saludable.')
+        if path == '/' and args.expected_revision:
+            if body.get('revision') != args.expected_revision.lower():
+                raise SystemExit('La API todavía no confirma la revisión esperada.')
+            print('Revisión desplegada confirmada.', flush=True)
         if expected == 401 and 'detail' not in body:
             raise SystemExit('La respuesta de autenticación no tiene el contrato esperado.')
 

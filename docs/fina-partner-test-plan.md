@@ -241,6 +241,81 @@ este bloque no añade campos, tablas ni dependencias.
 Idempotencia persistente, reservas y sesiones de caja permanecen pendientes. No se deben
 marcar como verificadas por el bloqueo local de botones ni por las pruebas con dobles.
 
+## Séptimo bloque: ejecución reproducible de diagnóstico e integración
+
+Bases revisadas: backend `2b133cc`, frontend `adb8a23`, ambos limpios en `dev`.
+
+- `[x]` Compilación Python de diagnóstico, configuración, suite de integración, revisión
+  de despliegue, rutas y smoke. Compilar la suite no significa que sus casos hayan pasado.
+- `[x]` `python3 -m unittest discover -s tests -v`: 34 pruebas locales aprobadas. Las siete
+  nuevas verifican rechazo de configuración ausente/no QA, ausencia de secretos en errores,
+  nombre separado de base de pruebas y publicación exclusiva de revisiones válidas.
+- `[x]` `npx tsc --noEmit`: frontend sin cambios y salida idéntica a la anterior, con los
+  mismos 75 errores preexistentes.
+- `[ ]` Ejecutar `diagnostico_inventario` en Railway y guardar su informe sanitizado.
+- `[ ]` Ejecutar los 15 casos de `store.test_inventario_integration` contra PostgreSQL QA.
+- `[ ]` Usar cuentas QA para la prueba visual en Android y revisar logs del 502 anterior.
+
+### Diagnóstico en el servicio de Railway
+
+Desde una sesión de terminal del servicio con el código actualizado y su entorno Django,
+ejecutar (no ejecutar localmente bajo las convenciones actuales):
+
+```bash
+python manage.py diagnostico_inventario --limit 20
+```
+
+El comando no llama a `migrate`, no crea archivos ni corrige stock. PostgreSQL impone
+solo lectura y un límite de 15 segundos por consulta. Si hay migraciones de `store`
+pendientes o conflictos, omite la consulta de inventario; `inventario: null` no significa
+inventario correcto. `--skip-stock` permite revisar sólo migraciones/revisión;
+`--check` sale con error si el informe requiere revisión.
+
+Guardar `migraciones_store_pendientes`, `conflictos_migraciones`,
+`cambios_modelos_sin_migracion` e `inventario`. Revisar todas las operaciones propuestas:
+la diferencia de `MovimientoStock.origen` detectada antes puede no ser la única.
+El diagnóstico no demuestra la causa del 502; se necesitan los logs de aquel despliegue.
+
+Para comprobar el commit servido desde cualquier equipo sin credenciales:
+
+```bash
+python3 scripts/smoke_inventory_routes.py https://backend-ojeda-app-production.up.railway.app --expected-revision <SHA_COMPLETO>
+```
+
+La comprobación falla si el servidor no expone revisión o todavía sirve otra. Sin el
+argumento conserva el smoke anónimo anterior. Railway documenta el SHA para despliegues
+disparados desde GitHub en su [referencia de variables](https://docs.railway.com/variables/reference#git-variables).
+
+### Suite PostgreSQL en un entorno de pruebas preparado
+
+Requiere las dependencias del backend instaladas, su configuración de arranque válida y
+`TUPLAZA_TEST_DATABASE_URL` configurada como secreto del entorno, apuntando a un servidor
+PostgreSQL de QA con base `tuplaza_qa_inventario` (u otro sufijo). El usuario de conexión debe
+poder crear/eliminar **la base de prueba**; no reutilizar el servidor ni las credenciales
+operativas. No pegar la URL con contraseña en documentación ni en resultados de pruebas.
+
+```bash
+python manage.py test store.test_inventario_integration --settings=backend_ojeda.integration_settings --noinput
+```
+
+El runner crea `test_tuplaza_qa_inventario`, aplica las migraciones existentes, genera cuentas
+con dominio `.invalid`, tiendas y productos de prueba, y elimina esa base al finalizar.
+Si el nombre ya existe, `--noinput` permite recrearlo: reservar ese nombre exclusivamente
+para esta suite. La base fuente `tuplaza_qa_inventario` no es el destino de los fixtures.
+Fuera de `integration_settings`, esta clase se omite. Nunca activar estos settings en el
+servicio desplegado ni usar `--keepdb` para presentar como reproducible una base modificada.
+
+Los 15 casos cubren venta por almacén, rollback completo, líneas repetidas, aislamiento
+REST/JWT, cliente/anónimo, miembro desactivado, almacén inactivo, servicios y monedas,
+conteo principal, transferencia con tercer almacén, última unidad en dos cajas, deltas
+simultáneos, tickets en orden inverso, transferencias opuestas y diagnóstico sin reparación.
+La concurrencia usa conexiones por hilo y barrera de inicio; las conexiones tienen límites
+de consulta/bloqueo. Esto prueba solicitudes concurrentes, no idempotencia ni Android.
+
+Referencias de implementación: [base de pruebas de Django 5.1](https://docs.djangoproject.com/en/5.1/topics/testing/overview/#the-test-database)
+y [autodetección de migraciones de Django](https://github.com/django/django/blob/5.1.4/django/core/management/commands/makemigrations.py).
+No se ejecutó Django localmente: sigue aplicando `CONVENTIONS.md`.
+
 ## Pruebas de aislamiento y permisos
 
 - `[ ]` Un usuario no puede consultar el negocio de otra tienda modificando IDs.

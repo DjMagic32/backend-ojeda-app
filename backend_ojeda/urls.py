@@ -12,6 +12,7 @@ from drf_spectacular.views import (
 from .views import CustomTokenObtainPairView, CustomTokenRefreshView
 from .graphql import JWTGraphQLView
 from .schema import schema
+from .deployment import deployment_revision
 
 
 
@@ -23,6 +24,7 @@ def api_root(request):
     return JsonResponse({
         'service': 'TuPlaza API',
         'status': 'ok',
+        'revision': deployment_revision(),
         'docs': '/docs/' if settings.SERVE_API_DOCS else None,
     })
 
