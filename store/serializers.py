@@ -831,6 +831,7 @@ class VentaPresencialItemSerializer(serializers.Serializer):
 
 class VentaPresencialSerializer(serializers.Serializer):
     items = VentaPresencialItemSerializer(many=True, allow_empty=False)
+    almacen_id = serializers.IntegerField(required=False, allow_null=True, min_value=1)
     notas = serializers.CharField(required=False, allow_blank=True)
 
 

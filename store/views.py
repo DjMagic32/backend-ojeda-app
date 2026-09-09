@@ -740,6 +740,19 @@ class VentaPresencialCreateView(generics.GenericAPIView):
         except Tienda.DoesNotExist:
             raise ValidationError('El usuario autenticado no tiene una tienda asociada.')
 
+        almacen = None
+        if data.get('almacen_id') is not None:
+            try:
+                almacen = Almacen.objects.select_related('sucursal__negocio').get(
+                    pk=data['almacen_id'],
+                    activo=True,
+                    sucursal__activo=True,
+                )
+            except Almacen.DoesNotExist as exc:
+                raise ValidationError('El almacén indicado no está disponible.') from exc
+            if almacen.sucursal.negocio.tienda_id != tienda.id:
+                raise ValidationError('El almacén no pertenece a tu tienda.')
+
         producto_ids = [item['producto_id'] for item in data['items']]
         productos = {
             p.id: p
@@ -791,6 +804,7 @@ class VentaPresencialCreateView(generics.GenericAPIView):
                         -item['cantidad'],
                         MovimientoStock.ORIGEN_VENTA_PRESENCIAL,
                         order=order,
+                        almacen=almacen,
                     ))
         except DjangoValidationError as exc:
             raise ValidationError(exc.messages[0] if exc.messages else 'No se pudo registrar la venta.')

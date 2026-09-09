@@ -100,8 +100,8 @@ flujos actuales.
 
 - **API:** `[x]` CRUD protegido de sucursales y almacenes, sin eliminación física.
 - **App:** `[x]` pantalla de alta y desactivación accesible desde el perfil de la tienda.
-- **Operación:** `[ ]` ejecutar y probar la migración `0037_sucursal_almacen` en una base
-  de datos de prueba/despliegue.
+- **Operación:** `[x]` la migración `0037_sucursal_almacen` se ejecutó en Railway sin
+  migraciones pendientes; falta validar los datos reales con usuarios de prueba.
 - **Pendiente funcional:** `[~]` la asociación inicial y la transferencia básica ya están
   implementadas; queda probarlas y completar recepción/controles avanzados.
 
@@ -113,8 +113,8 @@ flujos actuales.
 - **App:** `[~]` resumen de productos asociados por almacén, historial con ubicación del
   movimiento y pantalla para transferir existencias; queda completar selección de almacén
   en ventas/ajustes y recepción avanzada.
-- **Operación:** `[ ]` ejecutar `0038_inventario_almacen` y `0039_transferencia_inventario`
-  en Railway y verificar las migraciones.
+- **Operación:** `[x]` `0038_inventario_almacen` y `0039_transferencia_inventario` se
+  ejecutaron en Railway y respondieron `No migrations to apply`.
 - **Pruebas:** `[ ]` ejecutar los casos de inventario con dos almacenes, transferencia
   insuficiente, concurrencia, servicios sin stock y compatibilidad con clientes antiguos.
 
@@ -139,6 +139,8 @@ flujos actuales.
 - `[ ]` Devolver una venta crea un movimiento inverso auditable.
 - `[ ]` Un servicio no descuenta inventario.
 - `[ ]` Una transferencia conserva cantidades y trazabilidad en origen/destino.
+- `[ ]` Una venta presencial descuenta del almacén seleccionado desde la app.
+- `[ ]` Un ajuste manual modifica sólo el almacén seleccionado desde la app.
 - `[ ]` El código de barras no puede apuntar a un producto de otro negocio.
 
 ## Pruebas financieras

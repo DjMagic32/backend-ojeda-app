@@ -33,8 +33,8 @@ ni como afirmación independiente de sus cifras comerciales.
 - **App:** `[x]` consume el endpoint de forma tolerante a errores y muestra el contexto del
   negocio activo en el perfil de la tienda, sin bloquear el catálogo si el backend aún no
   tiene aplicada la migración.
-- **Operación:** `[ ]` la migración debe ejecutarse en el entorno desplegado antes de usar
-  el endpoint con datos reales.
+- **Operación:** `[x]` las migraciones del módulo fueron ejecutadas en Railway; la respuesta
+  confirmó que no había migraciones pendientes y no se borraron datos.
 
 ### Avance del segundo paso
 
@@ -43,8 +43,9 @@ ni como afirmación independiente de sus cifras comerciales.
   `GET /api/store/mi-negocio/`.
 - **App:** `[x]` el perfil de la tienda muestra el resumen y existe una pantalla para crear
   y desactivar sucursales y almacenes.
-- **Operación:** `[ ]` falta aplicar la migración `0037_sucursal_almacen` y probarla con la
-  base de datos desplegada.
+- **Operación:** `[x]` la migración `0037_sucursal_almacen` quedó aplicada en Railway junto
+  con el resto de migraciones del proyecto; falta validar los datos reales con usuarios de
+  prueba.
 - **Alcance pendiente:** falta asignarla al inventario y transferir existencias; la pantalla
   actual no permite todavía renombrar registros existentes.
 
@@ -59,9 +60,22 @@ ni como afirmación independiente de sus cifras comerciales.
   asociados a cada almacén, el historial de stock muestra la sucursal/almacén del movimiento
   y hay una pantalla para transferir existencias. Todavía falta seleccionar el almacén
   explícitamente desde ventas/ajustes.
-- **Operación:** `[ ]` falta ejecutar `0038_inventario_almacen` y
-  `0039_transferencia_inventario` en Railway y validar los datos reales antes de marcar el
-  bloque como terminado.
+- **Operación:** `[x]` `0038_inventario_almacen` y `0039_transferencia_inventario` fueron
+  ejecutadas en Railway. Django dejó una advertencia sobre cambios de modelos sin migración
+  equivalente; no se debe marcar el bloque completo hasta revisar ese aviso y probar datos
+  reales.
+
+### Avance del cuarto paso
+
+- **API:** `[x]` las ventas presenciales aceptan un `almacen_id` opcional, verifican que el
+  almacén pertenezca al negocio de la tienda y registran la salida en ese almacén. Los
+  ajustes ya usan el mismo mecanismo; sin `almacen_id` se conserva el almacén principal.
+- **App:** `[x]` “Mis productos” y “Modo caja” cargan los almacenes activos y permiten elegir
+  dónde se aplica el ajuste o la venta.
+- **Operación:** `[x]` no requiere una migración adicional; el cambio es compatible con el
+  endpoint anterior y el fallback del almacén principal.
+- **Pruebas:** `[ ]` falta comprobar con dos almacenes, stock insuficiente, servicios y
+  permisos de un almacén de otra tienda.
 
 ## Conclusión ejecutiva
 
