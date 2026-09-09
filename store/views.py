@@ -14,6 +14,7 @@ from drf_spectacular.utils import extend_schema
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, transaction
 from django.db.models import Q
+from django.utils import timezone
 from rest_framework.decorators import action
 
 from .models import (
@@ -81,6 +82,7 @@ from .serializers import (
     TransferenciaInventarioSerializer,
     TransferenciaInventarioCreateSerializer,
     MovimientoStockSerializer,
+    HistorialStockQuerySerializer,
     AjusteStockSerializer,
     VentaPresencialSerializer,
     ArticuloUsadoSerializer,
@@ -91,6 +93,7 @@ from .services.realtime import broadcast_chat_message, broadcast_chat_read, noti
 from .services.push import send_push_to_user
 from .services.inventario import registrar_movimiento, transferir_stock
 from .services.ventas import registrar_venta_presencial
+from .services.historial import consultar_movimientos
 from .upload_validation import validate_chat_attachment, validate_image_upload
 
 logger = logging.getLogger(__name__)
@@ -701,8 +704,17 @@ class ProductoTiendaViewSet(viewsets.ModelViewSet):
             permission_classes=[IsAuthenticated, EsTienda])
     def movimientos(self, request, pk=None):
         producto = self._get_own_product()
-        movimientos = producto.movimientos_stock.all()[:50]
-        return Response(MovimientoStockSerializer(movimientos, many=True).data)
+        filtros = HistorialStockQuerySerializer(data=request.query_params)
+        if not filtros.is_valid():
+            mensaje = next(iter(filtros.errors.values()))[0]
+            return Response({'detail': str(mensaje)}, status=status.HTTP_400_BAD_REQUEST)
+        movimientos, siguiente = consultar_movimientos(
+            producto, filtros.validated_data, timezone.now(),
+        )
+        datos = MovimientoStockSerializer(movimientos, many=True).data
+        if filtros.validated_data['paginado']:
+            return Response({'results': datos, 'siguiente_antes_de': siguiente})
+        return Response(datos)
 
 
 class VentaPresencialCreateView(generics.GenericAPIView):

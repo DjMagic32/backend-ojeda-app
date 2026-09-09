@@ -189,6 +189,24 @@ La falta de acceso y entorno de pruebas impide cerrar la validación funcional r
 diagnóstico del 502. Se preparó la ejecución reproducible; no se corrigieron migraciones,
 no se modificó inventario operativo y no se activaron reservas ni idempotencia.
 
+### Octavo paso: historial de inventario filtrable y paginado (2026-09-09)
+
+- **API:** implementada consulta por almacén, origen y últimos 7/30/90 días en la ruta
+  existente de movimientos. `paginado=1` devuelve páginas de 50 y un cursor por ID para
+  consultar movimientos anteriores, incluyendo los que antes quedaban fuera del límite.
+  Sin ese parámetro conserva el array de hasta 50, ordenado por fecha, para apps anteriores.
+  La consulta parte del producto autorizado y carga sus ubicaciones sin consultas por fila.
+- **App:** implementados filtros, consulta de almacenes inactivos, “Cargar anteriores”,
+  reintento sin perder páginas cargadas y recarga al regresar a la pantalla. Las respuestas
+  de filtros anteriores se descartan; una API antigua no se presenta como si hubiera filtrado.
+- **Verificación local:** `[x]` compilación Python y 43 pruebas locales (9 nuevas del
+  historial con doble de consulta); 3 pruebas del contrato de la app. TypeScript conserva
+  los mismos 75 errores preexistentes. Estas pruebas no ejecutan Django ni PostgreSQL.
+- **Validación funcional:** `[ ]` comprobar filtros, permisos y más de 50 movimientos con
+  sesión real y Android. La auditoría de autor y motivo de ajustes continúa pendiente.
+- **Compatibilidad:** sin cambios de modelos, migraciones, stock ni arranque; el aviso
+  anterior de diferencias de migraciones sigue registrado y no se intenta corregir aquí.
+
 ## Conclusión ejecutiva
 
 Sí, podemos hacerlo, pero Fina Partner y TuPlaza parten de productos distintos:
@@ -280,7 +298,9 @@ el negocio y la sucursal correspondiente.
 - `[ ]` Recetas/BOM para comida, con descuento atómico de ingredientes al vender un plato.
 - `[ ]` Números de serie, IMEI, garantía y trazabilidad por unidad para tecnología.
 - `[ ]` Alertas configurables de reposición, rotación baja y productos agotados.
-- `[ ]` Historial completo de quién hizo cada ajuste y por qué.
+- `[~]` Historial consultable por almacén, origen y período, con paginación para recuperar
+  movimientos anteriores a los últimos 50. Implementado en API y app; faltan validación
+  funcional y registro completo de quién hizo cada ajuste y su motivo específico.
 
 ## 4. Ventas y punto de venta (POS)
 

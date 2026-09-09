@@ -343,6 +343,53 @@ Referencias de implementación: [base de pruebas de Django 5.1](https://docs.dja
 y [autodetección de migraciones de Django](https://github.com/django/django/blob/5.1.4/django/core/management/commands/makemigrations.py).
 No se ejecutó Django localmente: sigue aplicando `CONVENTIONS.md`.
 
+## Historial de inventario filtrable y paginado (2026-09-09)
+
+Implementado en **Mis productos → historial de stock del producto**. No requiere migraciones.
+
+Contrato de `GET /api/store/productos-tienda/{id}/movimientos/`:
+
+- Sin parámetros conserva el array de hasta 50 movimientos recientes por fecha.
+- `paginado=1` devuelve `{"results": [...], "siguiente_antes_de": 123}`; enviar
+  `antes_de=123` para continuar. Cursor `null` indica fin. Páginas ordenadas por ID
+  descendente, máximo 50 filas; las entradas nuevas se consultan al actualizar el historial.
+- Filtros opcionales: `almacen_id` positivo (incluye almacenes inactivos), `origen`
+  (`venta_presencial`, `orden_online`, `ajuste_manual`, `creacion`, `transferencia`) y
+  `dias` (`7`, `30`, `90`, intervalo móvil calculado en cada consulta). Omitir `dias`
+  consulta todas las fechas. Los filtros se aplican antes de limitar la página.
+- Un parámetro inválido devuelve `400` con `detail` en español. `antes_de` requiere
+  `paginado=1`. Los movimientos sin almacén siguen incluidos al seleccionar “Todos”.
+- La ruta conserva autenticación, rol tienda y verificación del producto propio. Filtrar
+  por un almacén sin movimientos de ese producto devuelve una página vacía.
+
+Verificación realizada:
+
+- `[x]` Compilación de vistas, serializers, servicio de historial y pruebas con `py_compile`.
+- `[x]` `python3 -m unittest discover -s tests -v`: 43 pruebas correctas; 9 del historial
+  cubren 125 movimientos, inserción entre páginas, límites de 50/51, filtros combinados,
+  inclusión del límite temporal, registros sin almacén y contrato anterior. Usan un doble
+  de consulta; no acreditan SQL ni permisos reales.
+- `[x]` `node --test scripts/stock-history.test.cjs`: 3 pruebas correctas de parámetros,
+  autenticación/timeout y compatibilidad. Una respuesta antigua sin filtros se rechaza.
+- `[x]` `npx tsc --noEmit`: mismos 75 errores preexistentes, salida idéntica antes/después.
+- `[x]` Smoke previo al push en Railway: salud `200` y ocho rutas administrativas `401`,
+  incluida la consulta de movimientos con filtros. Verifica disponibilidad y autenticación
+  requerida; no acredita el resultado de una consulta autenticada.
+
+Validación funcional pendiente, sin bloquear los siguientes desarrollos:
+
+- `[ ]` Con más de 50 movimientos, recorrer todas las páginas y confirmar que los IDs no
+  se repiten. Registrar otra entrada entre páginas y verla al actualizar.
+- `[ ]` Combinar almacén, origen y período; confirmar saldos históricos mostrados y que
+  no se mezclan ubicaciones. Consultar un almacén inactivo y movimientos sin almacén.
+- `[ ]` Cambiar filtros rápidamente con red lenta; no mostrar respuestas del filtro anterior.
+  Cortar la red al cargar anteriores: conservar lo ya leído y reintentar la misma página.
+- `[ ]` Volver de renombrar un almacén y confirmar el nuevo nombre. Si falla la consulta de
+  ubicaciones, conservar el contexto del filtro y ofrecer reintentar su carga.
+- `[ ]` Probar parámetros inválidos, usuario cliente y producto de otro negocio con sesión;
+  comprobar rechazo sin devolver movimientos ajenos.
+- `[ ]` Probar una app anterior: recibe un array y conserva el historial original.
+
 ## Pruebas de aislamiento y permisos
 
 - `[ ]` Un usuario no puede consultar el negocio de otra tienda modificando IDs.

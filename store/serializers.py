@@ -725,6 +725,29 @@ class ReporteSerializer(serializers.ModelSerializer):
         return super().create(validated_data)
 
 
+class HistorialStockQuerySerializer(serializers.Serializer):
+    paginado = serializers.BooleanField(default=False, error_messages={
+        'invalid': 'Indica un valor válido para paginado (1 o 0).',
+    })
+    almacen_id = serializers.IntegerField(required=False, min_value=1, max_value=9223372036854775807,
+        error_messages={'invalid': 'Indica un almacén válido.',
+                        'min_value': 'Indica un almacén válido.',
+                        'max_value': 'Indica un almacén válido.'})
+    antes_de = serializers.IntegerField(required=False, min_value=1, max_value=9223372036854775807,
+        error_messages={'invalid': 'El cursor del historial no es válido.',
+                        'min_value': 'El cursor del historial no es válido.',
+                        'max_value': 'El cursor del historial no es válido.'})
+    origen = serializers.ChoiceField(choices=MovimientoStock.ORIGENES, required=False,
+        error_messages={'invalid_choice': 'El origen del movimiento no es válido.'})
+    dias = serializers.ChoiceField(choices=[7, 30, 90], required=False,
+        error_messages={'invalid_choice': 'Selecciona un período de 7, 30 o 90 días.'})
+
+    def validate(self, attrs):
+        if 'antes_de' in attrs and not attrs['paginado']:
+            raise serializers.ValidationError('El cursor requiere paginado=1.')
+        return attrs
+
+
 class MovimientoStockSerializer(serializers.ModelSerializer):
     almacen_nombre = serializers.CharField(source='almacen.nombre', read_only=True, allow_null=True)
     sucursal_nombre = serializers.CharField(
