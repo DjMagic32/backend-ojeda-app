@@ -573,11 +573,27 @@ cualquier corrección debe generar reverso o ajuste auditable.
 
 - `[x]` API protegida, JWT, rate limits, validación de uploads y WebSockets para eventos
   de la aplicación actual.
-- `[~]` Redis/Channels está contemplado para tiempo real, pero la operación POS offline y
-  la reconciliación no están implementadas.
-- `[ ]` POS web/PWA offline-first con catálogo local y cola de ventas.
-- `[ ]` UUID/idempotency key por venta, pago, movimiento e importación.
-- `[ ]` Sincronización por lotes al recuperar conexión, con resolución de conflictos.
+- `[~]` Redis/Channels está contemplado para tiempo real, pero la reconciliación
+  offline completa no está implementada.
+- `[~]` App móvil (no PWA) con cola de ventas sin conexión: `offlineSalesQueue.ts`
+  en TuPlazaFront (2026-09-14) — múltiples ventas encoladas localmente, cada una
+  con su propia clave idempotente, sincronizadas contra el endpoint existente de
+  `ventas-presenciales/operaciones/` cuando hay señal. Decisión de producto: se
+  permite cobrar con la última existencia conocida (con aviso al cajero) en vez
+  de bloquear la venta cuando falla la consulta en vivo; un rechazo del servidor
+  por falta de stock real al sincronizar queda marcado "Requiere atención", sin
+  bloquear el resto de la cola. **No hay catálogo de productos cacheado
+  localmente todavía** — sólo resuelve la etapa de cobro de un ticket con
+  productos ya cargados en memoria, no la búsqueda/escaneo sin conexión. Ver
+  `TuPlazaFront/ROADMAP.md` Fase 2 para el detalle completo.
+- `[x]` UUID/idempotency key por venta, pago (venta presencial, caja, cuentas por
+  cobrar/pagar, gastos) y ahora también por venta encolada sin conexión. Falta
+  extenderlo a movimientos de inventario e importación masiva (no existe
+  todavía).
+- `[~]` Sincronización por lotes al recuperar conexión: implementada para ventas
+  de caja (`offlineSalesQueue.syncAll`, procesa la cola en orden y se detiene
+  ante un fallo de red real sin marcar ventas más nuevas). Sin resolución de
+  conflictos más allá de "el servidor rechaza si no hay stock real".
 - `[ ]` Bloqueos transaccionales y pruebas de concurrencia para inventario y caja.
 - `[ ]` Backups verificados, restauración probada, retención y plan de recuperación ante
   desastre.
@@ -690,7 +706,9 @@ Reglas importantes:
 - `[~]` Ledger bimonetario y diferencial cambiario. Diferencial cambiario realizado
   por abono implementado para cuentas por cobrar; falta libro mayor consolidado.
 - `[ ]` Conciliación de caja y bancos.
-- `[ ]` Offline-first, cola idempotente y sincronización.
+- `[~]` Offline-first, cola idempotente y sincronización. Cola de ventas sin
+  conexión en Modo caja implementada (ver sección 10); falta catálogo de
+  productos cacheado para búsqueda/escaneo sin señal.
 - `[ ]` Backups, monitoreo y pruebas de concurrencia.
 
 ### Fase 3 — Verticales de alto valor
@@ -737,7 +755,9 @@ es:
    reporte de utilidad neta. Compras y reportes de margen siguen pendientes.
 6. Ledger bimonetario consolidado (hoy el diferencial vive por abono, sin libro mayor)
    y conciliación de caja/bancos.
-7. Offline-first y verticales según los primeros negocios reales.
+7. Offline-first — `[~]` cola de ventas sin conexión iniciada en TuPlazaFront
+   (2026-09-14); falta catálogo de productos cacheado localmente. Verticales
+   según los primeros negocios reales.
 8. Integraciones externas e IA con los datos ya confiables.
 
 Así TuPlaza puede ofrecer a una tienda control real de su operación sin perder el marketplace,

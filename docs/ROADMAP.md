@@ -51,8 +51,8 @@ Contraparte en la app: `TuPlazaFront/ROADMAP.md`.
   (mismo patrón que cuentas por cobrar, con el signo del diferencial cambiario
   invertido: tasa al alza = pérdida, no ganancia), endpoints en
   `/api/store/cuentas-pagar/` y pantalla en TuPlazaFront (`AccountsPayable.tsx`).
-  Falta: proveedores con datos fiscales/condiciones de pago (hoy es sólo
-  nombre/teléfono libre), órdenes de compra, alertas de
+  Falta: entidad `Proveedor` propia con condiciones de pago (sin datos fiscales,
+  ver sección de alcance de producto), órdenes de compra, alertas de
   vencimiento y validación Android/PostgreSQL.
 - `[~]` Clientes con crédito comercial y cuentas por cobrar: `CuentaPorCobrar`,
   `AbonoCuentaPorCobrar`, `OperacionCuentaPorCobrar` (migración `0042`),
@@ -66,6 +66,13 @@ Contraparte en la app: `TuPlazaFront/ROADMAP.md`.
   — se dejó fuera de este primer corte para no mezclar subida de archivos con el
   patrón de operación idempotente en JSON), reporte de utilidad neta y validación
   Android/PostgreSQL.
+- `[~]` Offline-first real en Modo caja: `offlineSalesQueue.ts` en TuPlazaFront
+  (2026-09-14) — cola de múltiples ventas sin conexión, cada una con su propia
+  clave idempotente contra el endpoint ya existente de venta presencial. Decisión
+  de producto: se permite cobrar con la última existencia conocida cuando falla
+  la consulta en vivo (con aviso al cajero); un rechazo del servidor por falta
+  de stock real al sincronizar queda marcado "Requiere atención". Sin catálogo
+  de productos cacheado todavía — sólo resuelve el cobro de un ticket ya armado.
 - `[~]` Diferencial cambiario realizado al liquidar una cuenta
   (ΔC = monto_usd_abonado·(T2−T1)): implementado en `registrar_abono()`,
   cubierto por 12 pruebas con dobles de ORM. Sigue faltando un libro mayor
