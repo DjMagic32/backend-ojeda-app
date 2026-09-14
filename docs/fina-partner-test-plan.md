@@ -694,6 +694,63 @@ tasa subió).
   que un abono con tasa más alta que la de emisión se muestra como pérdida
   (monto negativo), no como ganancia.
 
+## Gastos operativos (2026-09-14)
+
+Implementado: `store/models.py::Gasto/OperacionGasto`, `store/services/gastos.py`,
+migración `0044_gastos.py`. Sin ciclo de abonos (a diferencia de cuentas por
+cobrar/pagar): un gasto es un registro de una sola vez, sólo `crear`/`anular`.
+
+### Contrato
+
+- `GET /api/store/gastos/`: lista paginada (20 por página, `siguiente_antes_de`),
+  filtrable por `sucursal_id`, `tipo` (`fijo`/`variable`) y `anulado` (`0`/`1`).
+  `GET /api/store/gastos/{id}/`: detalle de un gasto.
+- `POST /api/store/gastos/operaciones/`: UUID `clave_operacion` obligatorio y
+  `accion` en `crear`/`anular`. `crear` requiere `tipo`, `categoria`, `monto`,
+  `moneda`; `sucursal_id` es opcional pero, si se indica, debe pertenecer a una
+  sucursal activa del negocio o se rechaza con `400`. Captura `TasaCambio.vigente()`
+  como snapshot informativo (permite `None` si no hay tasa registrada — a
+  diferencia de cuentas por cobrar/pagar, no bloquea la creación). `anular`
+  requiere `gasto_id`; marca `anulado=True` y agrega el motivo a las notas sin
+  borrar el registro.
+- `POST /api/store/gastos/operaciones/{uuid}/cancelar/`: mismo contrato que el
+  resto de operaciones idempotentes del proyecto.
+- Sin las dos tablas nuevas, todos los endpoints devuelven `503`.
+- **Sin comprobante adjunto todavía** (foto/PDF): quedó fuera de este corte por
+  incompatibilidad entre `multipart/form-data` y el patrón de operación
+  idempotente en JSON. No probar subida de archivos hasta que se diseñe esa pieza.
+
+### Evidencia y activación
+
+- `[x]` `python3 -m py_compile` de modelos, serializers, vistas, rutas, servicio,
+  migración y ambos archivos de prueba nuevos.
+- `[x]` `python3 -m unittest discover -s tests -v`: 102 pruebas correctas (8
+  nuevas: 7 de `test_gastos_service.py` con dobles de ORM — captura de tasa
+  vigente, `None` sin tasa registrada, sucursal ajena rechazada, sucursal propia
+  aceptada, anulación con motivo en notas, doble anulación rechazada, gasto de
+  otra tienda — más 1 de `test_gastos_migration.py`, comparación estática AST).
+- `[ ]` Confirmar `0044` aplicada en Railway. No se ejecutó en esta sesión por
+  falta de acceso a Railway.
+- `[ ]` Smoke anónimo de las cuatro rutas nuevas (deben responder `401`, no
+  `503`, una vez aplicada la migración).
+
+### Casos pendientes en API y PostgreSQL
+
+1. `[ ]` Crear gasto fijo y variable en USD y VES; confirmar que la lista separa
+   por `tipo` y que el detalle muestra `tasa_aplicada` capturada al momento.
+2. `[ ]` Crear gasto con `sucursal_id` de otra tienda: `400` sin crear el registro.
+3. `[ ]` Sin `TasaCambio` registrada: crear un gasto igual debe funcionar con
+   `tasa_aplicada: null` (a diferencia de cuentas por cobrar/pagar, que si
+   bloquean sin tasa).
+4. `[ ]` Anular un gasto y confirmar que sigue apareciendo en la lista (no se
+   borra) con `anulado: true`; un segundo intento de anular debe rechazarse.
+5. `[ ]` Reintentar la misma `clave_operacion` de una creación ya confirmada:
+   debe devolver el mismo gasto, sin duplicar el registro.
+6. `[ ]` Filtrar por `sucursal_id`, `tipo` y `anulado` combinados; paginar más de
+   20 gastos y confirmar que `siguiente_antes_de` no repite IDs.
+
+No hay pantalla en TuPlazaFront todavía para gastos: estos casos son sólo de API.
+
 ## Pruebas de aislamiento y permisos
 
 - `[ ]` Un usuario no puede consultar el negocio de otra tienda modificando IDs.

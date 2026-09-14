@@ -767,6 +767,59 @@ class OperacionCuentaPorPagar(models.Model):
         constraints = [models.UniqueConstraint(fields=['tienda_id', 'clave'], name='unique_operacion_cxp_tienda')]
 
 
+class Gasto(models.Model):
+    """Egreso operativo del negocio, clasificado por tipo y sucursal.
+
+    No forma parte de un libro mayor: es un registro plano para reportes de
+    rentabilidad. Un gasto anulado se conserva (no se borra) para auditoría.
+    """
+
+    TIPO_FIJO = 'fijo'
+    TIPO_VARIABLE = 'variable'
+    TIPOS = [
+        (TIPO_FIJO, 'Fijo'),
+        (TIPO_VARIABLE, 'Variable'),
+    ]
+
+    tienda_id = models.PositiveBigIntegerField()
+    sucursal_id = models.PositiveBigIntegerField(null=True, blank=True)
+    tipo = models.CharField(max_length=10, choices=TIPOS)
+    categoria = models.CharField(max_length=100)
+    descripcion = models.TextField(blank=True, default='')
+    monto = models.DecimalField(max_digits=14, decimal_places=2)
+    moneda = models.CharField(max_length=3, choices=MONEDAS, default=MONEDA_USD)
+    tasa_aplicada = models.DecimalField(
+        max_digits=12, decimal_places=4, null=True, blank=True,
+        help_text='Tasa USD→VES vigente al registrar el gasto (snapshot).',
+    )
+    anulado = models.BooleanField(default=False)
+    notas = models.TextField(blank=True, default='')
+    registrado_por = models.PositiveBigIntegerField()
+    creado = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-creado']
+        indexes = [
+            models.Index(fields=['tienda_id', '-creado'], name='store_gasto_tienda_idx'),
+            models.Index(fields=['tienda_id', 'sucursal_id', '-creado'], name='store_gasto_sucursal_idx'),
+        ]
+
+    def __str__(self):
+        return f'Gasto #{self.pk}: {self.categoria} ({self.moneda} {self.monto})'
+
+
+class OperacionGasto(models.Model):
+    tienda_id = models.PositiveBigIntegerField()
+    clave = models.UUIDField()
+    huella = models.CharField(max_length=64, blank=True, default='')
+    respuesta = models.JSONField(null=True, blank=True)
+    cancelada = models.BooleanField(default=False)
+    creado = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['tienda_id', 'clave'], name='unique_operacion_gasto_tienda')]
+
+
 class StoreOrderItem(models.Model):
     order = models.ForeignKey(StoreOrder, on_delete=models.CASCADE, related_name='items')
     producto = models.ForeignKey(ProductoTienda, on_delete=models.CASCADE, related_name='order_items')

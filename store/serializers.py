@@ -39,6 +39,8 @@ from .models import (
     MovimientoCaja,
     AbonoCuentaPorCobrar,
     AbonoCuentaPorPagar,
+    Gasto,
+    MONEDAS,
 )
 from .upload_validation import validate_image_upload
 
@@ -977,6 +979,38 @@ class OperacionCuentaPorPagarSerializer(serializers.Serializer):
             'crear': {'proveedor_nombre', 'proveedor_telefono', 'monto_usd', 'vencimiento', 'notas'},
             'abonar': {'cuenta_id', 'monto_usd', 'medio_pago'},
             'anular': {'cuenta_id', 'motivo'},
+        }[attrs['accion']] | {'accion', 'clave_operacion'}
+        if set(attrs) - permitidos:
+            raise serializers.ValidationError('La operación contiene campos que no le corresponden.')
+        return attrs
+
+
+class OperacionGastoSerializer(serializers.Serializer):
+    clave_operacion = serializers.UUIDField(error_messages={
+        'required': 'Indica la clave de la operación.',
+        'invalid': 'La clave de la operación no es válida.',
+        'null': 'Indica la clave de la operación.',
+    })
+    accion = serializers.ChoiceField(choices=['crear', 'anular'])
+    gasto_id = serializers.IntegerField(required=False, min_value=1)
+    sucursal_id = serializers.IntegerField(required=False, min_value=1)
+    tipo = serializers.ChoiceField(choices=Gasto.TIPOS, required=False)
+    categoria = serializers.CharField(max_length=100, required=False)
+    descripcion = serializers.CharField(required=False, allow_blank=True, max_length=1000)
+    monto = serializers.DecimalField(max_digits=14, decimal_places=2, min_value=Decimal('0.01'), required=False)
+    moneda = serializers.ChoiceField(choices=MONEDAS, required=False)
+    motivo = serializers.CharField(max_length=500, required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        requeridos = {
+            'crear': ['tipo', 'categoria', 'monto', 'moneda'],
+            'anular': ['gasto_id'],
+        }[attrs['accion']]
+        if any(campo not in attrs for campo in requeridos):
+            raise serializers.ValidationError('Completa todos los datos de la operación.')
+        permitidos = {
+            'crear': {'sucursal_id', 'tipo', 'categoria', 'descripcion', 'monto', 'moneda'},
+            'anular': {'gasto_id', 'motivo'},
         }[attrs['accion']] | {'accion', 'clave_operacion'}
         if set(attrs) - permitidos:
             raise serializers.ValidationError('La operación contiene campos que no le corresponden.')

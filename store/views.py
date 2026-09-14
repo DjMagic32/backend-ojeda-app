@@ -95,6 +95,7 @@ from .serializers import (
     MovimientoCajaSerializer,
     OperacionCuentaPorCobrarSerializer,
     OperacionCuentaPorPagarSerializer,
+    OperacionGastoSerializer,
 )
 from .models import MovimientoStock, StoreOrderItem, ArticuloUsado
 from .permissions import EsTienda
@@ -116,6 +117,8 @@ from .services.cuentas import (
 )
 from .models import CuentaPorPagar, OperacionCuentaPorPagar
 from .services import pagos as pagos_service
+from .models import Gasto, OperacionGasto
+from .services import gastos as gastos_service
 from .upload_validation import validate_chat_attachment, validate_image_upload
 
 logger = logging.getLogger(__name__)
@@ -1043,6 +1046,72 @@ class CuentaPorPagarView(OperacionVentaPresencialView):
         try:
             resultado, repetida = confirmar_operacion(tienda.pk, datos['clave_operacion'], huella, ejecutar,
                                                        modelo=OperacionCuentaPorPagar)
+        except (ConflictoOperacion, DjangoValidationError) as exc:
+            mensaje = exc.messages[0] if isinstance(exc, DjangoValidationError) else str(exc)
+            return Response({'detail': mensaje}, status=409 if isinstance(exc, ConflictoOperacion) else 400)
+        return Response({**resultado, 'clave_operacion': str(datos['clave_operacion']), 'repetida': repetida}, status=200 if repetida else 201)
+
+
+class GastoView(OperacionVentaPresencialView):
+    serializer_class = OperacionGastoSerializer
+
+    def get(self, request, pk=None, **kwargs):
+        tienda = self._tienda()
+        if not gastos_service.gastos_disponible():
+            return Response({'detail': 'Los gastos aún no están disponibles.'}, status=503)
+        gastos = Gasto.objects.filter(tienda_id=tienda.pk)
+        if pk is not None:
+            if not 0 < pk <= 9223372036854775807:
+                return Response({'detail': 'El gasto no está disponible.'}, status=404)
+            gasto = gastos.filter(pk=pk).first()
+            if gasto is None:
+                return Response({'detail': 'El gasto no está disponible.'}, status=404)
+            return Response({'gasto': gastos_service.resumen_gasto(gasto)})
+        if 'sucursal_id' in request.query_params:
+            valor = request.query_params['sucursal_id']
+            if not valor.isascii() or not valor.isdecimal() or len(valor) > 19 or not 0 < int(valor) <= 9223372036854775807:
+                return Response({'detail': 'El filtro de sucursal no es válido.'}, status=400)
+            gastos = gastos.filter(sucursal_id=int(valor))
+        if 'tipo' in request.query_params:
+            if request.query_params['tipo'] not in dict(Gasto.TIPOS):
+                return Response({'detail': 'El tipo de gasto no es válido.'}, status=400)
+            gastos = gastos.filter(tipo=request.query_params['tipo'])
+        if 'anulado' in request.query_params:
+            if request.query_params['anulado'] not in ('0', '1'):
+                return Response({'detail': 'El filtro de anulado no es válido.'}, status=400)
+            gastos = gastos.filter(anulado=request.query_params['anulado'] == '1')
+        if 'antes_de' in request.query_params:
+            valor = request.query_params['antes_de']
+            if not valor.isascii() or not valor.isdecimal() or len(valor) > 19 or not 0 < int(valor) <= 9223372036854775807:
+                return Response({'detail': 'El filtro no es válido.'}, status=400)
+            gastos = gastos.filter(id__lt=int(valor))
+        filas = list(gastos.order_by('-id')[:21])
+        return Response({'results': [gastos_service.resumen_gasto(g) for g in filas[:20]],
+                         'siguiente_antes_de': filas[19].pk if len(filas) > 20 else None})
+
+    def post(self, request, clave=None, **kwargs):
+        tienda = self._tienda()
+        if not gastos_service.gastos_disponible():
+            return Response({'detail': 'Los gastos aún no están disponibles.'}, status=503)
+        if clave is not None:
+            resultado = cancelar_operacion(tienda.pk, clave, modelo=OperacionGasto)
+            return Response({'clave_operacion': str(clave), 'cancelada': resultado is None, 'resultado': resultado})
+        serializer = self.get_serializer(data=request.data)
+        if not serializer.is_valid():
+            return Response({'detail': 'Revisa los datos del gasto.'}, status=400)
+        datos = serializer.validated_data
+        huella = hashlib.sha256(json.dumps({k: v for k, v in datos.items() if k != 'clave_operacion'},
+                                           sort_keys=True, default=str).encode()).hexdigest()
+
+        def ejecutar():
+            accion = datos['accion']
+            if accion == 'crear':
+                return gastos_service.crear_gasto(tienda, request.user, datos)
+            return gastos_service.anular_gasto(tienda, request.user, datos['gasto_id'], datos.get('motivo', ''))
+
+        try:
+            resultado, repetida = confirmar_operacion(tienda.pk, datos['clave_operacion'], huella, ejecutar,
+                                                       modelo=OperacionGasto)
         except (ConflictoOperacion, DjangoValidationError) as exc:
             mensaje = exc.messages[0] if isinstance(exc, DjangoValidationError) else str(exc)
             return Response({'detail': mensaje}, status=409 if isinstance(exc, ConflictoOperacion) else 400)

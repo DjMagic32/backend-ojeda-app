@@ -332,9 +332,40 @@ no se modificó inventario operativo y no se activaron reservas ni idempotencia.
   `[~]` pantalla en TuPlazaFront implementada (`AccountsPayable.tsx`,
   `payablesApi.ts`, `pendingPayable.ts`; `npx tsc --noEmit` con los 75 errores
   preexistentes, ninguno nuevo); falta prueba real en Android. `[ ]` entidad
-  `Proveedor` propia con datos fiscales. `[ ]` alertas de vencimiento
-  automáticas. `[ ]` casos PostgreSQL de
-  concurrencia.
+  `Proveedor` propia (sin datos fiscales, ver sección 11). `[ ]` alertas de
+  vencimiento automáticas. `[ ]` casos PostgreSQL de concurrencia.
+
+### Decimotercer paso: gastos operativos por sucursal (2026-09-14)
+
+- **API:** `[~]` `Gasto` (tipo fijo/variable, categoría libre, monto+moneda,
+  snapshot de tasa BCV, `anulado` en vez de borrado) y `OperacionGasto` para
+  idempotencia (migración `0044`), servicio `store/services/gastos.py`. Endpoint
+  `POST /api/store/gastos/operaciones/` con `accion` en `crear`/`anular`;
+  `GET /api/store/gastos/` lista y filtra por `sucursal_id`, `tipo` y `anulado`;
+  `GET /api/store/gastos/{id}/` trae el detalle. Si se indica `sucursal_id`, se
+  valida que pertenezca al negocio de la tienda y esté activa (mismo criterio que
+  la apertura de caja).
+- **Sin ciclo de abonos:** a diferencia de cuentas por cobrar/pagar, un gasto es
+  un registro de una sola vez; no hay `abonar`, sólo `crear`/`anular`. Anular
+  conserva el registro (auditoría), no lo borra.
+- **Comprobante adjunto:** `[ ]` deliberadamente fuera de este corte. Adjuntar
+  imagen/PDF requiere `multipart/form-data`, incompatible con el body JSON que
+  usa `confirmar_operacion`/`cancelar_operacion` para el resto del proyecto.
+  Diseñar por separado (¿subir primero y referenciar una URL en `crear`? ¿aceptar
+  el archivo fuera de la operación idempotente?) antes de implementarlo.
+- **Migración:** `[x]` `0044_gastos.py` revisada: sólo crea las dos tablas
+  nuevas, depende de `0043`, sin tocar datos ni tablas existentes. Comparación
+  estática AST en `tests/test_gastos_migration.py`, sin diferencias.
+- **Verificación local:** `[x]` `python3 -m py_compile` de todos los archivos
+  tocados y `python3 -m unittest discover -s tests -v`: 102 pruebas correctas (8
+  nuevas: 7 del servicio de gastos con dobles de ORM — incluye sucursal ajena
+  rechazada, sin tasa vigente guarda `None`, doble anulación rechazada — más 1 de
+  comparación de migración). **No se ejecutó Django, migraciones ni PostgreSQL
+  real.**
+- **Pendiente:** `[ ]` desplegar y confirmar `0044` aplicada en Railway (sin
+  acceso a Railway en esta sesión). `[ ]` pantalla en TuPlazaFront. `[ ]`
+  comprobante adjunto. `[ ]` reporte de utilidad neta que combine gastos con
+  ventas. `[ ]` casos PostgreSQL de concurrencia.
 
 ## Conclusión ejecutiva
 
@@ -499,9 +530,14 @@ cualquier corrección debe generar reverso o ajuste auditable.
 
 ## 7. Gastos y rentabilidad
 
-- `[ ]` Gastos fijos y variables categorizados por negocio, sucursal y período.
+- `[~]` Gastos fijos y variables categorizados por negocio, sucursal y período: modelo
+  `Gasto`, migración `0044`, servicio `store/services/gastos.py`, API idempotente
+  (`/api/store/gastos/`) con filtros por sucursal, tipo y estado anulado. Falta
+  pantalla en la app y validación Android/PostgreSQL.
 - `[ ]` Adjuntar comprobantes de gasto (imagen/PDF), aplicando las mismas validaciones de
-  archivos ya usadas en uploads.
+  archivos ya usadas en uploads. Se dejó fuera del primer corte porque mezclar
+  `multipart/form-data` con el patrón de operación idempotente en JSON necesita
+  diseño propio (ver decimotercer paso).
 - `[ ]` Reglas para separar costo de producto, gasto operativo, delivery, comisión y otros
   cargos.
 - `[ ]` Estado de resultados básico y margen por producto/categoría/canal.
@@ -646,9 +682,9 @@ Reglas importantes:
 
 ### Fase 2 — Finanzas y resiliencia
 
-- `[~]` Gastos, proveedores, compras, cuentas por cobrar/pagar. Cuentas por cobrar y
-  por pagar iniciadas (undécimo y duodécimo paso); falta gastos, proveedores con
-  datos fiscales propios y compras.
+- `[~]` Gastos, proveedores, compras, cuentas por cobrar/pagar. Cuentas por cobrar,
+  por pagar y gastos iniciados (undécimo, duodécimo y decimotercer paso); falta
+  entidad `Proveedor` propia y compras.
 - `[~]` Ledger bimonetario y diferencial cambiario. Diferencial cambiario realizado
   por abono implementado para cuentas por cobrar; falta libro mayor consolidado.
 - `[ ]` Conciliación de caja y bancos.
@@ -693,9 +729,10 @@ es:
 2. Reservas y movimientos de inventario por almacén.
 3. Venta/POS idempotente y sesión de caja.
 4. Cuentas por cobrar y por pagar con diferencial cambiario realizado — `[~]`
-   ambas iniciadas (undécimo y duodécimo paso); falta proveedores con datos
-   fiscales, alertas de vencimiento y validación PostgreSQL.
-5. Gastos, compras, proveedores y reportes de margen.
+   ambas iniciadas (undécimo y duodécimo paso); falta entidad `Proveedor` propia,
+   alertas de vencimiento y validación PostgreSQL.
+5. Gastos — `[~]` iniciado (decimotercer paso), falta comprobante adjunto y
+   reporte de utilidad neta. Compras y reportes de margen siguen pendientes.
 6. Ledger bimonetario consolidado (hoy el diferencial vive por abono, sin libro mayor)
    y conciliación de caja/bancos.
 7. Offline-first y verticales según los primeros negocios reales.
