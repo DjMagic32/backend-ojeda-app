@@ -297,10 +297,11 @@ no se modificó inventario operativo y no se activaron reservas ni idempotencia.
   PostgreSQL real** — sigue aplicando `CONVENTIONS.md`.
 - **Pendiente:** `[ ]` desplegar y confirmar `0042` aplicada en Railway (no hecho en esta
   sesión: sin acceso a Railway CLI/logs, mismo bloqueo que el diagnóstico del 502
-  documentado en el quinto paso). `[ ]` pantalla en TuPlazaFront (ver
-  `TuPlazaFront/ROADMAP.md`, Fase 2). `[ ]` alertas de vencimiento automáticas. `[ ]`
-  cuentas por pagar (mismo patrón, para proveedores). `[ ]` casos PostgreSQL de
-  concurrencia (dos abonos simultáneos sobre el mismo saldo).
+  documentado en el quinto paso). `[~]` pantalla en TuPlazaFront implementada
+  (`AccountsReceivable.tsx`, `accountsApi.ts`, `pendingAccount.ts`; ver
+  `TuPlazaFront/ROADMAP.md`, Fase 2); falta prueba real en Android. `[ ]` alertas de
+  vencimiento automáticas. `[ ]` cuentas por pagar (mismo patrón, para proveedores).
+  `[ ]` casos PostgreSQL de concurrencia (dos abonos simultáneos sobre el mismo saldo).
 
 ## Conclusión ejecutiva
 
@@ -448,8 +449,8 @@ cualquier corrección debe generar reverso o ajuste auditable.
 - `[ ]` Cuentas por pagar con vencimiento, abonos, saldo y alertas.
 - `[~]` Crédito comercial a clientes y cuentas por cobrar: modelo, migración `0042`,
   servicio con abonos parciales/totales y diferencial cambiario, API idempotente
-  (`/api/store/cuentas-cobrar/`). Falta pantalla en la app, alertas de vencimiento
-  automáticas y validación Android/PostgreSQL.
+  (`/api/store/cuentas-cobrar/`) y pantalla en TuPlazaFront (`AccountsReceivable.tsx`).
+  Falta alertas de vencimiento automáticas y validación Android/PostgreSQL.
 - `[~]` Historial de pagos parciales y estados vencido/por vencer: cada `CuentaPorCobrar`
   guarda `estado` (pendiente/parcial/pagada/anulada) y sus `AbonoCuentaPorCobrar`
   consultables por `GET /api/store/cuentas-cobrar/{id}/`; falta el estado "vencida"

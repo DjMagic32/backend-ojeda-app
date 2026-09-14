@@ -51,8 +51,9 @@ Contraparte en la app: `TuPlazaFront/ROADMAP.md`.
 - `[~]` Clientes con crédito comercial y cuentas por cobrar: `CuentaPorCobrar`,
   `AbonoCuentaPorCobrar`, `OperacionCuentaPorCobrar` (migración `0042`),
   servicio `store/services/cuentas.py`, endpoints idempotentes en
-  `/api/store/cuentas-cobrar/`. Falta: alertas de vencimiento automáticas,
-  validación Android/PostgreSQL y exponer la pantalla en la app.
+  `/api/store/cuentas-cobrar/` y pantalla en TuPlazaFront
+  (`AccountsReceivable.tsx`). Falta: alertas de vencimiento automáticas y
+  validación Android/PostgreSQL.
 - `[ ]` Gastos fijos/variables por sucursal, con comprobante adjunto.
 - `[~]` Diferencial cambiario realizado al liquidar una cuenta
   (ΔC = monto_usd_abonado·(T2−T1)): implementado en `registrar_abono()`,
@@ -96,6 +97,5 @@ Contraparte en la app: `TuPlazaFront/ROADMAP.md`.
 2. Correr la suite PostgreSQL de integración ya escrita — es lo único que puede
    mover los `[~]` actuales a `[x]`, incluyendo el bloque de cuentas por
    cobrar recién añadido.
-3. Cuentas por pagar (simétrico a cuentas por cobrar, mismo patrón) y la
-   pantalla en la app para cuentas por cobrar — hoy el módulo sólo existe en
-   la API.
+3. Cuentas por pagar (simétrico a cuentas por cobrar, mismo patrón) — la pantalla
+   de cuentas por cobrar en TuPlazaFront ya se implementó (`AccountsReceivable.tsx`).

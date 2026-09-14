@@ -607,8 +607,29 @@ sugerido" en `fina-partner-gap-checklist.md`.
 8. `[ ]` Sin tasa de cambio registrada (`TasaCambio` vacío): crear/abonar deben fallar
    con `400` y mensaje claro, sin crear registros parciales.
 
-No hay pantalla en TuPlazaFront todavía: estos casos son sólo de API. La pantalla queda
-como pendiente en `TuPlazaFront/ROADMAP.md` (Fase 2).
+### Pantalla en TuPlazaFront (2026-09-14)
+
+Implementada: `AccountsReceivable.tsx` (Perfil de tienda → Cuentas por cobrar),
+`app/api/accountsApi.ts` y `app/services/pendingAccount.ts` — mismo patrón de
+recuperación de operación interrumpida que `pendingCash.ts`/`pendingSale.ts`
+(clave UUID, cola serializada por usuario, validación estricta del resultado
+guardado antes de confiar en él). Crea cuenta, filtra por estado, muestra detalle
+con abonos (tasa de liquidación y diferencial cambiario de cada uno), registra
+abono y anula cuentas sin abonos. El vencimiento se captura como texto
+`AAAA-MM-DD` (sin selector de fecha, no hay dependencia nueva instalada).
+
+- `[x]` `npx tsc --noEmit`: 75 errores, idénticos a los preexistentes documentados
+  en el resto de bloques; ninguno en los archivos nuevos o tocados
+  (`accountsApi.ts`, `pendingAccount.ts`, `AccountsReceivable.tsx`,
+  `StoreProfile.tsx`, `StackNavigator.tsx`, `RootStackParamList.tsx`).
+- `[ ]` Android: crear cuenta, abonar parcial y total, verificar que el diferencial
+  mostrado coincide con `(tasa_liquidación − tasa_emisión) · monto_usd`, anular una
+  cuenta sin abonos y confirmar que una con abonos rechaza la anulación.
+- `[ ]` Cortar conexión tras enviar una operación y volver a abrir la pantalla:
+  debe aparecer el modal de recuperación con el mismo comportamiento que caja.
+- `[ ]` Doble toque en "Registrar cuenta"/"Abonar"/"Anular" mientras hay una
+  operación en curso: sólo debe enviarse una solicitud (bloqueo compartido con
+  el resto de la pantalla, igual que en `CashSessions`).
 
 ## Pruebas de aislamiento y permisos
 
