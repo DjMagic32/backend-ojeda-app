@@ -545,6 +545,71 @@ El aviso anterior de modelos sin migración sigue pendiente de diagnóstico comp
 migración no corrige ni modifica esas diferencias. No borrar operaciones ni sesiones para
 resolver reintentos: se perdería la trazabilidad y protección frente a solicitudes atrasadas.
 
+## Cuentas por cobrar y diferencial cambiario (2026-09-14)
+
+Implementado: `store/models.py::CuentaPorCobrar/AbonoCuentaPorCobrar/OperacionCuentaPorCobrar`,
+`store/services/cuentas.py`, migración `0042_cuentas_por_cobrar.py`. Sin pantalla en la
+app todavía; sólo API. Corresponde al cuarto punto del "Orden de implementación
+sugerido" en `fina-partner-gap-checklist.md`.
+
+### Contrato
+
+- `GET /api/store/cuentas-cobrar/`: lista paginada (20 por página, `siguiente_antes_de`),
+  filtrable por `estado`. `GET /api/store/cuentas-cobrar/{id}/`: cuenta + hasta 50 abonos.
+- `POST /api/store/cuentas-cobrar/operaciones/`: UUID `clave_operacion` obligatorio y
+  `accion` en `crear`/`abonar`/`anular`. `crear` requiere `cliente_nombre` y `monto_usd`;
+  usa `TasaCambio.vigente()` como tasa de emisión y dejar `saldo_usd = monto_usd`.
+  `abonar` requiere `cuenta_id` y `monto_usd`; usa la tasa vigente como tasa de
+  liquidación, calcula `diferencial_cambiario_ves = monto_usd · (tasa_liquidación −
+  tasa_emisión)` y reduce el saldo. `anular` requiere `cuenta_id` y sólo se permite si
+  no tiene abonos. `201` la primera vez, `200` en un reintento con la misma clave y
+  mismo payload (`repetida:true`), `409` si la clave ya se usó con otro payload.
+- `POST /api/store/cuentas-cobrar/operaciones/{uuid}/cancelar/`: mismo contrato que caja
+  y ventas presenciales — cancela sólo si no se ejecutó; si ya corrió, devuelve el
+  resultado original.
+- Sin las tres tablas nuevas, todos los endpoints devuelven `503` (`cuentas_por_cobrar_disponible()`).
+
+### Evidencia y activación
+
+- `[x]` `python3 -m py_compile` de modelos, serializers, vistas, rutas, servicio,
+  migración y ambos archivos de prueba nuevos.
+- `[x]` `python3 -m unittest discover -s tests -v`: 81 pruebas correctas (12 nuevas de
+  `test_cuentas_service.py` con dobles de ORM: diferencial a favor y en contra del
+  negocio, abono parcial vs total, abono mayor al saldo, cuenta sin tasa vigente, cuenta
+  ya pagada/anulada, anulación con y sin abonos, cuenta de otra tienda). Ninguna prueba
+  ejecuta SQL real ni concurrencia.
+- `[x]` `tests/test_cuentas_migration.py`: comparación estática AST entre `models.py` y
+  `0042_cuentas_por_cobrar.py` (mismo enfoque que `test_caja_migration.py`), sin
+  diferencias de campos, choices ni restricciones.
+- `[ ]` Confirmar `0042` aplicada en Railway (endpoint autorizado de migraciones) y que
+  `idempotencia_disponible`-equivalente (`cuentas_por_cobrar_disponible`) responda
+  `true` con sesión real. No se ejecutó en esta sesión por falta de acceso a Railway.
+- `[ ]` Smoke anónimo de las cuatro rutas nuevas (deben responder `401`, no `503`, una
+  vez aplicada la migración).
+
+### Casos pendientes en API y PostgreSQL
+
+1. `[ ]` Crear cuenta con tasa BCV=40, abonar USD 40 con tasa BCV=45: verificar
+   `diferencial_cambiario_ves = 200.00` (ganancia) y saldo USD 60.
+2. `[ ]` Mismo caso con tasa BCV=35 al abonar: `diferencial_cambiario_ves = -200.00`
+   (pérdida), saldo USD 60.
+3. `[ ]` Abonar el saldo completo: `estado` pasa a `pagada`; un abono posterior debe
+   rechazarse con `409`/`400` según corresponda.
+4. `[ ]` Reintentar la misma `clave_operacion` de un abono ya confirmado: debe devolver
+   el mismo `diferencial_cambiario_ves`, no recalcularlo con la tasa del momento del
+   reintento.
+5. `[ ]` Dos abonos simultáneos sobre el mismo saldo (PostgreSQL): sólo uno debe pasar si
+   juntos superan el saldo; confirmar que `select_for_update` serializa correctamente.
+6. `[ ]` Cuenta de otra tienda: `cuenta_id` ajeno debe devolver el mismo mensaje genérico
+   que en caja/inventario, sin filtrar si existe.
+7. `[ ]` Anular una cuenta con un abono parcial: debe rechazarse; anular una sin abonos
+   debe dejar `estado=anulada` y no permitir nuevos abonos.
+8. `[ ]` Sin tasa de cambio registrada (`TasaCambio` vacío): crear/abonar deben fallar
+   con `400` y mensaje claro, sin crear registros parciales.
+
+No hay pantalla en TuPlazaFront todavía: estos casos son sólo de API. La pantalla queda
+como pendiente en `TuPlazaFront/ROADMAP.md` (Fase 2).
+
 ## Pruebas de aislamiento y permisos
 
 - `[ ]` Un usuario no puede consultar el negocio de otra tienda modificando IDs.

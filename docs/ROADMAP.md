@@ -1,0 +1,101 @@
+# Roadmap backend — hacia paridad funcional con Fina Partner
+
+Mapa de fases con checkboxes para ir cerrando la brecha con Fina Partner (ver
+`Análisis y Réplica Fina Partner.pdf`). Este archivo es el resumen navegable;
+el detalle de implementación, contratos de API y evidencia de cada paso vive en
+`fina-partner-gap-checklist.md` (análisis de brecha completo) y
+`fina-partner-test-plan.md` (plan de pruebas). No dupliques ahí el detalle: si
+una tarea nueva se implementa, actualiza esos dos documentos y sólo mueve el
+checkbox correspondiente aquí.
+
+Contraparte en la app: `TuPlazaFront/ROADMAP.md`.
+
+## Convención
+
+- `[x]` Hecho y validado end-to-end (API + permisos + pruebas reales).
+- `[~]` Implementado pero con validación pendiente (Android, PostgreSQL real,
+  concurrencia) — ver el gap-checklist para el detalle exacto de qué falta.
+- `[ ]` No empezado.
+- `[-]` Fuera de alcance por ahora (depende de terceros/regulación/decisión de
+  negocio pendiente).
+
+**Estado revisado:** 2026-09-14, sobre `dev` + cuentas por cobrar (ver Fase 2).
+
+## Fase 0 — Fundaciones (multi-tenant)
+
+- `[~]` `Negocio` / `NegocioMiembro` como tenant, creación automática por tienda.
+- `[~]` `Sucursal` / `Almacen` con estructura principal automática.
+- `[ ]` Revisión sistemática de aislamiento por tenant en cada vista/resolver
+  (hoy es filtrado manual por `tienda`/`negocio`, sin capa común obligatoria).
+- `[ ]` Evaluar Row-Level Security de PostgreSQL (sólo cuando el modelo de
+  pertenencia esté cerrado; no bloquea el resto de fases).
+
+## Fase 1 — Núcleo operativo (POS, inventario, caja)
+
+- `[~]` Inventario por almacén + transferencias atómicas.
+- `[~]` Venta presencial idempotente (`OperacionVentaPresencial`, UUID,
+  cancelación, replay seguro).
+- `[~]` Sesión de caja: apertura, movimientos, cierre/arqueo por moneda
+  (migración `0041`).
+- `[ ]` Reservas de stock para órdenes online (se revirtió por un 502 en
+  Railway — commits `8082c31`/`346659a`; retomar después de diagnosticar esa
+  caída, no antes).
+- `[ ]` Costo promedio ponderado calculado de forma transaccional.
+- `[ ]` Importador CSV/Excel de catálogo, precios y existencias.
+- `[ ]` Variantes con SKU propio (talla/color/modelo) en el modelo de producto.
+
+## Fase 2 — Finanzas y resiliencia
+
+- `[ ]` Proveedores, órdenes de compra, cuentas por pagar (simétrico a lo de
+  abajo, mismo patrón de servicio/migración/idempotencia).
+- `[~]` Clientes con crédito comercial y cuentas por cobrar: `CuentaPorCobrar`,
+  `AbonoCuentaPorCobrar`, `OperacionCuentaPorCobrar` (migración `0042`),
+  servicio `store/services/cuentas.py`, endpoints idempotentes en
+  `/api/store/cuentas-cobrar/`. Falta: alertas de vencimiento automáticas,
+  validación Android/PostgreSQL y exponer la pantalla en la app.
+- `[ ]` Gastos fijos/variables por sucursal, con comprobante adjunto.
+- `[~]` Diferencial cambiario realizado al liquidar una cuenta
+  (ΔC = monto_usd_abonado·(T2−T1)): implementado en `registrar_abono()`,
+  cubierto por 12 pruebas con dobles de ORM. Sigue faltando un libro mayor
+  (ledger) que agregue estos asientos en un solo reporte por negocio/sucursal
+  — hoy cada abono guarda su propio diferencial, sin vista consolidada.
+- `[ ]` Idempotencia por UUID extendida a toda operación con dinero o stock
+  (ya cubre venta presencial, caja y ahora cuentas por cobrar).
+- `[ ]` Ejecutar la suite de integración PostgreSQL ya escrita
+  (`store/test_inventario_integration.py`) y las pruebas de concurrencia
+  descritas en `fina-partner-test-plan.md`; hoy están preparadas, no corridas.
+- `[ ]` Backups verificados y plan de recuperación ante desastre.
+
+## Fase 3 — Verticales
+
+- `[ ]` Recetas/BOM (gastronomía): descuento atómico de insumos al vender un
+  plato, ajuste del CPP.
+- `[ ]` Lotes + fecha de vencimiento + despacho FEFO (farmacia/perecederos).
+- `[ ]` Variantes talla/color (moda) — depende del catálogo de Fase 1.
+- `[ ]` Números de serie/IMEI + garantía (tecnología).
+- `[ ]` Matriz de compatibilidad + unidades fraccionarias (repuestos/ferretería).
+
+## Fase 4 — Ecosistema
+
+- `[ ]` Roles granulares (cajero, despachador, solo lectura) — hoy sólo existen
+  `owner`/`admin` en `NegocioMiembro`.
+- `[ ]` Auditoría inmutable de cambios sensibles (precio, stock, caja, usuarios,
+  permisos).
+- `[ ]` CRM: ficha de cliente por negocio, historial, RFM, campañas.
+- `[-]` Cashea (BNPL) — depende de contrato/API/credenciales del proveedor.
+- `[-]` Pago Móvil C2P/P2C automatizado — depende de acuerdos bancarios.
+- `[-]` Facturación fiscal SENIAT / bridge de impresoras fiscales — requiere
+  asesoría legal antes de escribir código.
+- `[ ]` Asistente IA tipo Nina (Text-to-SQL de solo lectura, réplica separada,
+  guardrails de tenant obligatorio).
+
+## Próximo paso recomendado
+
+1. Diagnosticar y cerrar el 502 que bloqueó las reservas de inventario (Fase 1)
+   antes de sumar módulos nuevos sobre una base sin validar.
+2. Correr la suite PostgreSQL de integración ya escrita — es lo único que puede
+   mover los `[~]` actuales a `[x]`, incluyendo el bloque de cuentas por
+   cobrar recién añadido.
+3. Cuentas por pagar (simétrico a cuentas por cobrar, mismo patrón) y la
+   pantalla en la app para cuentas por cobrar — hoy el módulo sólo existe en
+   la API.

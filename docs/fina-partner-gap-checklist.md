@@ -266,6 +266,42 @@ no se modificó inventario operativo y no se activaron reservas ni idempotencia.
   El aviso anterior de modelos sin migración sigue separado; no se crearon correcciones
   automáticas para diferencias no diagnosticadas.
 
+### Undécimo paso: cuentas por cobrar y diferencial cambiario realizado (2026-09-14)
+
+- **API:** `[~]` `CuentaPorCobrar` (saldo en USD, tasa de emisión, estado
+  pendiente/parcial/pagada/anulada), `AbonoCuentaPorCobrar` (tasa de liquidación, monto
+  en VES equivalente, diferencial cambiario) y `OperacionCuentaPorCobrar` para
+  idempotencia, reutilizando exactamente el patrón de `OperacionCaja`
+  (`confirmar_operacion`/`cancelar_operacion` genéricos de `ventas_idempotentes.py`).
+  Endpoint único `POST /api/store/cuentas-cobrar/operaciones/` con `accion` en
+  `crear`/`abonar`/`anular`; `GET /api/store/cuentas-cobrar/` lista y filtra por estado;
+  `GET /api/store/cuentas-cobrar/{id}/` trae la cuenta y sus abonos.
+- **Diferencial cambiario:** implementado en `store/services/cuentas.py::registrar_abono`
+  siguiendo la fórmula del análisis (ΔC = monto_usd_abonado · (tasa_liquidación −
+  tasa_emisión)), guardado por abono en `diferencial_cambiario_ves` (positivo = ganancia,
+  negativo = pérdida). El saldo de la cuenta permanece siempre en USD; el diferencial es
+  un asiento informativo en VES, no afecta cuánto debe el cliente en dólares.
+- **Idempotencia:** cada operación (crear/abonar/anular) requiere `clave_operacion` UUID;
+  un reintento con la misma clave devuelve el mismo resultado sin duplicar el abono ni
+  recalcular el diferencial con una tasa distinta. Cancelar sólo bloquea intentos que no
+  se hayan ejecutado, igual que en caja y ventas presenciales.
+- **Migración:** `[x]` `0042_cuentas_por_cobrar.py` revisada: sólo crea las tres tablas
+  nuevas, sin tocar datos ni tablas existentes. Comparación estática automatizada contra
+  `store/models.py` en `tests/test_cuentas_migration.py` (mismo enfoque AST que
+  `test_caja_migration.py`), sin diferencias.
+- **Verificación local:** `[x]` `python3 -m py_compile` de todos los archivos tocados y
+  `python3 -m unittest discover -s tests -v`: 81 pruebas correctas (12 nuevas del
+  servicio de cuentas con dobles de ORM, cubriendo diferencial a favor/en contra, abono
+  parcial vs total, rechazo de abono mayor al saldo, cuentas sin tasa vigente, anulación
+  con/sin abonos y aislamiento por tienda). **No se ejecutó Django, migraciones ni
+  PostgreSQL real** — sigue aplicando `CONVENTIONS.md`.
+- **Pendiente:** `[ ]` desplegar y confirmar `0042` aplicada en Railway (no hecho en esta
+  sesión: sin acceso a Railway CLI/logs, mismo bloqueo que el diagnóstico del 502
+  documentado en el quinto paso). `[ ]` pantalla en TuPlazaFront (ver
+  `TuPlazaFront/ROADMAP.md`, Fase 2). `[ ]` alertas de vencimiento automáticas. `[ ]`
+  cuentas por pagar (mismo patrón, para proveedores). `[ ]` casos PostgreSQL de
+  concurrencia (dos abonos simultáneos sobre el mismo saldo).
+
 ## Conclusión ejecutiva
 
 Sí, podemos hacerlo, pero Fina Partner y TuPlaza parten de productos distintos:
@@ -396,8 +432,10 @@ el negocio y la sucursal correspondiente.
 - `[ ]` Conciliación de transferencias/Pago Móvil mediante importación o webhook cuando el
   banco lo permita.
 - `[ ]` Libro mayor/ledger con asientos inmutables y trazabilidad de origen.
-- `[ ]` Diferencial cambiario realizado al momento de cobrar una cuenta emitida con otra
-  tasa.
+- `[~]` Diferencial cambiario realizado al momento de cobrar una cuenta emitida con otra
+  tasa. Implementado para cuentas por cobrar (`store/services/cuentas.py::registrar_abono`);
+  falta el equivalente para cuentas por pagar y un reporte consolidado. Ver el undécimo
+  paso más abajo.
 - `[ ]` Reportes de flujo de caja, ingresos, egresos, utilidad bruta y utilidad neta.
 
 La regla de diseño debe ser: nunca sobrescribir un movimiento financiero confirmado;
@@ -408,8 +446,14 @@ cualquier corrección debe generar reverso o ajuste auditable.
 - `[ ]` Proveedores con datos fiscales, contactos y condiciones de pago.
 - `[ ]` Orden de compra, recepción parcial/total y entrada automática al inventario.
 - `[ ]` Cuentas por pagar con vencimiento, abonos, saldo y alertas.
-- `[ ]` Crédito comercial a clientes y cuentas por cobrar.
-- `[ ]` Historial de pagos parciales y estados vencido/por vencer.
+- `[~]` Crédito comercial a clientes y cuentas por cobrar: modelo, migración `0042`,
+  servicio con abonos parciales/totales y diferencial cambiario, API idempotente
+  (`/api/store/cuentas-cobrar/`). Falta pantalla en la app, alertas de vencimiento
+  automáticas y validación Android/PostgreSQL.
+- `[~]` Historial de pagos parciales y estados vencido/por vencer: cada `CuentaPorCobrar`
+  guarda `estado` (pendiente/parcial/pagada/anulada) y sus `AbonoCuentaPorCobrar`
+  consultables por `GET /api/store/cuentas-cobrar/{id}/`; falta el estado "vencida"
+  automático a partir de `vencimiento` (hoy sólo se guarda la fecha, sin job que la evalúe).
 - `[ ]` Reporte de antigüedad de saldos y recordatorios configurables.
 
 ## 7. Gastos y rentabilidad
@@ -555,8 +599,10 @@ Reglas importantes:
 
 ### Fase 2 — Finanzas y resiliencia
 
-- `[ ]` Gastos, proveedores, compras, cuentas por cobrar/pagar.
-- `[ ]` Ledger bimonetario y diferencial cambiario.
+- `[~]` Gastos, proveedores, compras, cuentas por cobrar/pagar. Cuentas por cobrar
+  iniciadas (undécimo paso); falta cuentas por pagar, gastos, proveedores y compras.
+- `[~]` Ledger bimonetario y diferencial cambiario. Diferencial cambiario realizado
+  por abono implementado para cuentas por cobrar; falta libro mayor consolidado.
 - `[ ]` Conciliación de caja y bancos.
 - `[ ]` Offline-first, cola idempotente y sincronización.
 - `[ ]` Backups, monitoreo y pruebas de concurrencia.
@@ -598,10 +644,13 @@ es:
 1. `Business/Tenant` + miembros/permisos + sucursal/almacén.
 2. Reservas y movimientos de inventario por almacén.
 3. Venta/POS idempotente y sesión de caja.
-4. Gastos, compras, proveedores y reportes de margen.
-5. Ledger bimonetario y conciliación.
-6. Offline-first y verticales según los primeros negocios reales.
-7. Integraciones externas e IA con los datos ya confiables.
+4. Cuentas por cobrar y diferencial cambiario realizado — `[~]` iniciado (undécimo
+   paso); falta cuentas por pagar, alertas de vencimiento y validación PostgreSQL.
+5. Gastos, compras, proveedores y reportes de margen.
+6. Ledger bimonetario consolidado (hoy el diferencial vive por abono, sin libro mayor)
+   y conciliación de caja/bancos.
+7. Offline-first y verticales según los primeros negocios reales.
+8. Integraciones externas e IA con los datos ya confiables.
 
 Así TuPlaza puede ofrecer a una tienda control real de su operación sin perder el marketplace,
 el delivery ni el flujo simplificado para usuarios que sólo venden artículos ocasionalmente.
