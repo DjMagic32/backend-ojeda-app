@@ -38,6 +38,7 @@ from .models import (
     ArticuloUsado,
     MovimientoCaja,
     AbonoCuentaPorCobrar,
+    AbonoCuentaPorPagar,
 )
 from .upload_validation import validate_image_upload
 
@@ -940,6 +941,40 @@ class OperacionCuentaPorCobrarSerializer(serializers.Serializer):
             raise serializers.ValidationError('Completa todos los datos de la operación.')
         permitidos = {
             'crear': {'cliente_nombre', 'cliente_telefono', 'order_id', 'monto_usd', 'vencimiento', 'notas'},
+            'abonar': {'cuenta_id', 'monto_usd', 'medio_pago'},
+            'anular': {'cuenta_id', 'motivo'},
+        }[attrs['accion']] | {'accion', 'clave_operacion'}
+        if set(attrs) - permitidos:
+            raise serializers.ValidationError('La operación contiene campos que no le corresponden.')
+        return attrs
+
+
+class OperacionCuentaPorPagarSerializer(serializers.Serializer):
+    clave_operacion = serializers.UUIDField(error_messages={
+        'required': 'Indica la clave de la operación.',
+        'invalid': 'La clave de la operación no es válida.',
+        'null': 'Indica la clave de la operación.',
+    })
+    accion = serializers.ChoiceField(choices=['crear', 'abonar', 'anular'])
+    cuenta_id = serializers.IntegerField(required=False, min_value=1)
+    proveedor_nombre = serializers.CharField(max_length=200, required=False)
+    proveedor_telefono = serializers.CharField(max_length=20, required=False, allow_blank=True)
+    monto_usd = serializers.DecimalField(max_digits=14, decimal_places=2, min_value=Decimal('0.01'), required=False)
+    vencimiento = serializers.DateField(required=False, allow_null=True)
+    notas = serializers.CharField(required=False, allow_blank=True, max_length=1000)
+    medio_pago = serializers.ChoiceField(choices=AbonoCuentaPorPagar.MEDIOS, required=False)
+    motivo = serializers.CharField(max_length=500, required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        requeridos = {
+            'crear': ['proveedor_nombre', 'monto_usd'],
+            'abonar': ['cuenta_id', 'monto_usd'],
+            'anular': ['cuenta_id'],
+        }[attrs['accion']]
+        if any(campo not in attrs for campo in requeridos):
+            raise serializers.ValidationError('Completa todos los datos de la operación.')
+        permitidos = {
+            'crear': {'proveedor_nombre', 'proveedor_telefono', 'monto_usd', 'vencimiento', 'notas'},
             'abonar': {'cuenta_id', 'monto_usd', 'medio_pago'},
             'anular': {'cuenta_id', 'motivo'},
         }[attrs['accion']] | {'accion', 'clave_operacion'}

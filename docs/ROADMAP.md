@@ -19,7 +19,7 @@ Contraparte en la app: `TuPlazaFront/ROADMAP.md`.
 - `[-]` Fuera de alcance por ahora (depende de terceros/regulación/decisión de
   negocio pendiente).
 
-**Estado revisado:** 2026-09-14, sobre `dev` + cuentas por cobrar (ver Fase 2).
+**Estado revisado:** 2026-09-14, sobre `dev` + cuentas por cobrar y por pagar (ver Fase 2).
 
 ## Fase 0 — Fundaciones (multi-tenant)
 
@@ -46,8 +46,13 @@ Contraparte en la app: `TuPlazaFront/ROADMAP.md`.
 
 ## Fase 2 — Finanzas y resiliencia
 
-- `[ ]` Proveedores, órdenes de compra, cuentas por pagar (simétrico a lo de
-  abajo, mismo patrón de servicio/migración/idempotencia).
+- `[~]` Cuentas por pagar a proveedores: `CuentaPorPagar`, `AbonoCuentaPorPagar`,
+  `OperacionCuentaPorPagar` (migración `0043`), servicio `store/services/pagos.py`
+  (mismo patrón que cuentas por cobrar, con el signo del diferencial cambiario
+  invertido: tasa al alza = pérdida, no ganancia), endpoints en
+  `/api/store/cuentas-pagar/`. Falta: proveedores con datos fiscales/condiciones de
+  pago (hoy es sólo nombre/teléfono libre), órdenes de compra, alertas de
+  vencimiento y validación Android/PostgreSQL.
 - `[~]` Clientes con crédito comercial y cuentas por cobrar: `CuentaPorCobrar`,
   `AbonoCuentaPorCobrar`, `OperacionCuentaPorCobrar` (migración `0042`),
   servicio `store/services/cuentas.py`, endpoints idempotentes en
@@ -97,5 +102,6 @@ Contraparte en la app: `TuPlazaFront/ROADMAP.md`.
 2. Correr la suite PostgreSQL de integración ya escrita — es lo único que puede
    mover los `[~]` actuales a `[x]`, incluyendo el bloque de cuentas por
    cobrar recién añadido.
-3. Cuentas por pagar (simétrico a cuentas por cobrar, mismo patrón) — la pantalla
-   de cuentas por cobrar en TuPlazaFront ya se implementó (`AccountsReceivable.tsx`).
+3. Pantalla de cuentas por pagar en TuPlazaFront (la API ya existe) y proveedores
+   con datos fiscales/condiciones de pago — hoy `CuentaPorPagar` sólo guarda
+   nombre y teléfono libres, sin entidad `Proveedor` propia.

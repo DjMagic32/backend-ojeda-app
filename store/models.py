@@ -688,6 +688,85 @@ class OperacionCuentaPorCobrar(models.Model):
         constraints = [models.UniqueConstraint(fields=['tienda_id', 'clave'], name='unique_operacion_cxc_tienda')]
 
 
+class CuentaPorPagar(models.Model):
+    """Deuda comercial con un proveedor, denominada en USD (moneda funcional del negocio).
+
+    Simétrica a ``CuentaPorCobrar``: el saldo se liquida en bolívares a la tasa
+    vigente al momento del abono. El diferencial cambiario tiene signo invertido
+    respecto a una cuenta por cobrar: si la tasa sube entre la emisión y el pago,
+    liquidar la misma deuda en USD cuesta más bolívares, lo que es una pérdida
+    cambiaria para el negocio (no una ganancia, como en una cuenta por cobrar).
+    """
+
+    ESTADO_PENDIENTE = 'pendiente'
+    ESTADO_PARCIAL = 'parcial'
+    ESTADO_PAGADA = 'pagada'
+    ESTADO_ANULADA = 'anulada'
+    ESTADOS = [
+        (ESTADO_PENDIENTE, 'Pendiente'),
+        (ESTADO_PARCIAL, 'Abonada parcialmente'),
+        (ESTADO_PAGADA, 'Pagada'),
+        (ESTADO_ANULADA, 'Anulada'),
+    ]
+
+    tienda_id = models.PositiveBigIntegerField()
+    proveedor_nombre = models.CharField(max_length=200)
+    proveedor_telefono = models.CharField(max_length=20, blank=True, default='')
+    monto_usd = models.DecimalField(max_digits=14, decimal_places=2)
+    saldo_usd = models.DecimalField(max_digits=14, decimal_places=2)
+    tasa_emision = models.DecimalField(max_digits=12, decimal_places=4)
+    estado = models.CharField(max_length=15, choices=ESTADOS, default=ESTADO_PENDIENTE)
+    vencimiento = models.DateField(null=True, blank=True)
+    notas = models.TextField(blank=True, default='')
+    creado_por = models.PositiveBigIntegerField()
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-creado']
+        indexes = [
+            models.Index(fields=['tienda_id', 'estado'], name='store_cxp_tienda_estado_idx'),
+            models.Index(fields=['tienda_id', 'vencimiento'], name='store_cxp_tienda_venc_idx'),
+        ]
+
+    def __str__(self):
+        return f'CxP #{self.pk}: {self.proveedor_nombre} (USD {self.saldo_usd})'
+
+
+class AbonoCuentaPorPagar(models.Model):
+    """Pago que liquida total o parcialmente una CuentaPorPagar."""
+
+    MEDIOS = [('efectivo', 'Efectivo'), ('pago_movil', 'Pago móvil'), ('zelle', 'Zelle'),
+              ('tarjeta', 'Tarjeta'), ('transferencia', 'Transferencia')]
+
+    cuenta = models.ForeignKey(CuentaPorPagar, on_delete=models.PROTECT, related_name='abonos')
+    monto_usd = models.DecimalField(max_digits=14, decimal_places=2)
+    tasa_liquidacion = models.DecimalField(max_digits=12, decimal_places=4)
+    monto_ves_equivalente = models.DecimalField(max_digits=16, decimal_places=2)
+    diferencial_cambiario_ves = models.DecimalField(max_digits=16, decimal_places=2)
+    medio_pago = models.CharField(max_length=20, choices=MEDIOS, default='efectivo')
+    registrado_por = models.PositiveBigIntegerField()
+    creado = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-creado']
+
+    def __str__(self):
+        return f'Abono #{self.pk} a CxP #{self.cuenta_id}: USD {self.monto_usd}'
+
+
+class OperacionCuentaPorPagar(models.Model):
+    tienda_id = models.PositiveBigIntegerField()
+    clave = models.UUIDField()
+    huella = models.CharField(max_length=64, blank=True, default='')
+    respuesta = models.JSONField(null=True, blank=True)
+    cancelada = models.BooleanField(default=False)
+    creado = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['tienda_id', 'clave'], name='unique_operacion_cxp_tienda')]
+
+
 class StoreOrderItem(models.Model):
     order = models.ForeignKey(StoreOrder, on_delete=models.CASCADE, related_name='items')
     producto = models.ForeignKey(ProductoTienda, on_delete=models.CASCADE, related_name='order_items')

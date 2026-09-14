@@ -631,6 +631,54 @@ abono y anula cuentas sin abonos. El vencimiento se captura como texto
   operación en curso: sólo debe enviarse una solicitud (bloqueo compartido con
   el resto de la pantalla, igual que en `CashSessions`).
 
+## Cuentas por pagar y diferencial cambiario invertido (2026-09-14)
+
+Implementado: `store/models.py::CuentaPorPagar/AbonoCuentaPorPagar/OperacionCuentaPorPagar`,
+`store/services/pagos.py`, migración `0043_cuentas_por_pagar.py`. Mismo patrón que
+cuentas por cobrar (ver bloque anterior); no repito el contrato completo aquí, sólo
+las diferencias.
+
+### Diferencias con cuentas por cobrar
+
+- Ruta base `/api/store/cuentas-pagar/` (mismos cuatro endpoints: lista, detalle,
+  operaciones, cancelar).
+- Campos `proveedor_nombre`/`proveedor_telefono` en vez de `cliente_nombre`/
+  `cliente_telefono`; sin `order_id` (una cuenta por pagar no nace de una orden de
+  venta).
+- **Diferencial cambiario con signo invertido:**
+  `diferencial_cambiario_ves = monto_usd · (tasa_emisión − tasa_liquidación)`.
+  Tasa al alza entre emisión y pago = pérdida (negativo); tasa a la baja = ganancia
+  (positivo). Es lo opuesto a cuentas por cobrar a propósito: ahí es un activo
+  (cobrar más tarde con tasa más alta favorece al negocio), aquí es un pasivo
+  (pagar más tarde con tasa más alta perjudica al negocio).
+
+### Evidencia y activación
+
+- `[x]` `python3 -m py_compile` de modelos, serializers, vistas, rutas, servicio,
+  migración y ambos archivos de prueba nuevos.
+- `[x]` `python3 -m unittest discover -s tests -v`: 94 pruebas correctas (13 nuevas:
+  12 de `test_pagos_service.py` con dobles de ORM — incluye un caso explícito de
+  pérdida con tasa al alza y uno de ganancia con tasa a la baja — más 1 de
+  `test_pagos_migration.py`, comparación estática AST).
+- `[ ]` Confirmar `0043` aplicada en Railway. No se ejecutó en esta sesión por
+  falta de acceso a Railway (mismo bloqueo de sesiones anteriores).
+- `[ ]` Smoke anónimo de las cuatro rutas nuevas (deben responder `401`, no `503`,
+  una vez aplicada la migración).
+
+### Casos pendientes en API y PostgreSQL
+
+1. `[ ]` Crear cuenta con tasa BCV=40, abonar USD 40 con tasa BCV=45: verificar
+   `diferencial_cambiario_ves = -200.00` (pérdida, signo invertido respecto a
+   cuentas por cobrar con los mismos números).
+2. `[ ]` Mismo caso con tasa BCV=35 al abonar: `diferencial_cambiario_ves = 200.00`
+   (ganancia).
+3. `[ ]` Repetir los casos 3-8 del bloque de cuentas por cobrar (pago total marca
+   `pagada`, reintento no recalcula con otra tasa, dos abonos simultáneos en
+   PostgreSQL, cuenta de otra tienda, anular con/sin abonos, sin tasa registrada).
+
+No hay pantalla en TuPlazaFront todavía para cuentas por pagar: estos casos son
+sólo de API.
+
 ## Pruebas de aislamiento y permisos
 
 - `[ ]` Un usuario no puede consultar el negocio de otra tienda modificando IDs.

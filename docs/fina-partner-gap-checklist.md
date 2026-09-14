@@ -303,6 +303,36 @@ no se modificó inventario operativo y no se activaron reservas ni idempotencia.
   vencimiento automáticas. `[ ]` cuentas por pagar (mismo patrón, para proveedores).
   `[ ]` casos PostgreSQL de concurrencia (dos abonos simultáneos sobre el mismo saldo).
 
+### Duodécimo paso: cuentas por pagar, simétricas a cuentas por cobrar (2026-09-14)
+
+- **API:** `[~]` `CuentaPorPagar`, `AbonoCuentaPorPagar`, `OperacionCuentaPorPagar`
+  (migración `0043`), servicio `store/services/pagos.py` reutilizando exactamente el
+  patrón de `store/services/cuentas.py` (mismo diseño de idempotencia vía
+  `confirmar_operacion`/`cancelar_operacion` genéricos). Endpoint
+  `POST /api/store/cuentas-pagar/operaciones/` con `accion` en
+  `crear`/`abonar`/`anular`; `GET /api/store/cuentas-pagar/` lista y filtra por
+  estado; `GET /api/store/cuentas-pagar/{id}/` trae la cuenta y sus abonos.
+- **Diferencial cambiario con signo invertido:** a diferencia de una cuenta por
+  cobrar, aquí ΔC = monto_usd_abonado · (tasa_emisión − tasa_liquidación). Si la
+  tasa sube entre la emisión de la deuda y el pago, liquidar el mismo monto en USD
+  cuesta más bolívares: eso es una **pérdida** cambiaria para el negocio (signo
+  negativo), no una ganancia. Es el reflejo contable correcto de que una cuenta por
+  pagar es un pasivo, no un activo. Cubierto explícitamente por
+  `test_abono_con_tasa_al_alza_registra_perdida_cambiaria` y
+  `test_abono_con_tasa_a_la_baja_registra_ganancia_cambiaria`.
+- **Migración:** `[x]` `0043_cuentas_por_pagar.py` revisada: sólo crea las tres
+  tablas nuevas, depende de `0042`, sin tocar datos ni tablas existentes.
+  Comparación estática AST en `tests/test_pagos_migration.py`, sin diferencias.
+- **Verificación local:** `[x]` `python3 -m py_compile` de todos los archivos
+  tocados y `python3 -m unittest discover -s tests -v`: 94 pruebas correctas (13
+  nuevas: 12 del servicio de pagos con dobles de ORM + 1 de comparación de
+  migración). **No se ejecutó Django, migraciones ni PostgreSQL real.**
+- **Pendiente:** `[ ]` desplegar y confirmar `0043` aplicada en Railway (sin
+  acceso a Railway en esta sesión, mismo bloqueo documentado en pasos anteriores).
+  `[ ]` pantalla en TuPlazaFront. `[ ]` entidad `Proveedor` propia con datos
+  fiscales. `[ ]` alertas de vencimiento automáticas. `[ ]` casos PostgreSQL de
+  concurrencia.
+
 ## Conclusión ejecutiva
 
 Sí, podemos hacerlo, pero Fina Partner y TuPlaza parten de productos distintos:
@@ -444,9 +474,14 @@ cualquier corrección debe generar reverso o ajuste auditable.
 
 ## 6. Compras, proveedores y cuentas pendientes
 
-- `[ ]` Proveedores con datos fiscales, contactos y condiciones de pago.
+- `[ ]` Proveedores con datos fiscales, contactos y condiciones de pago (hoy
+  `CuentaPorPagar` sólo guarda nombre y teléfono libres, sin entidad propia).
 - `[ ]` Orden de compra, recepción parcial/total y entrada automática al inventario.
-- `[ ]` Cuentas por pagar con vencimiento, abonos, saldo y alertas.
+- `[~]` Cuentas por pagar con vencimiento, abonos, saldo y alertas: modelo,
+  migración `0043`, servicio con abonos parciales/totales y diferencial
+  cambiario (signo invertido respecto a cuentas por cobrar), API idempotente
+  (`/api/store/cuentas-pagar/`). Falta pantalla en la app, alertas de
+  vencimiento automáticas y validación Android/PostgreSQL.
 - `[~]` Crédito comercial a clientes y cuentas por cobrar: modelo, migración `0042`,
   servicio con abonos parciales/totales y diferencial cambiario, API idempotente
   (`/api/store/cuentas-cobrar/`) y pantalla en TuPlazaFront (`AccountsReceivable.tsx`).
@@ -600,8 +635,9 @@ Reglas importantes:
 
 ### Fase 2 — Finanzas y resiliencia
 
-- `[~]` Gastos, proveedores, compras, cuentas por cobrar/pagar. Cuentas por cobrar
-  iniciadas (undécimo paso); falta cuentas por pagar, gastos, proveedores y compras.
+- `[~]` Gastos, proveedores, compras, cuentas por cobrar/pagar. Cuentas por cobrar y
+  por pagar iniciadas (undécimo y duodécimo paso); falta gastos, proveedores con
+  datos fiscales propios y compras.
 - `[~]` Ledger bimonetario y diferencial cambiario. Diferencial cambiario realizado
   por abono implementado para cuentas por cobrar; falta libro mayor consolidado.
 - `[ ]` Conciliación de caja y bancos.
@@ -645,8 +681,9 @@ es:
 1. `Business/Tenant` + miembros/permisos + sucursal/almacén.
 2. Reservas y movimientos de inventario por almacén.
 3. Venta/POS idempotente y sesión de caja.
-4. Cuentas por cobrar y diferencial cambiario realizado — `[~]` iniciado (undécimo
-   paso); falta cuentas por pagar, alertas de vencimiento y validación PostgreSQL.
+4. Cuentas por cobrar y por pagar con diferencial cambiario realizado — `[~]`
+   ambas iniciadas (undécimo y duodécimo paso); falta proveedores con datos
+   fiscales, alertas de vencimiento y validación PostgreSQL.
 5. Gastos, compras, proveedores y reportes de margen.
 6. Ledger bimonetario consolidado (hoy el diferencial vive por abono, sin libro mayor)
    y conciliación de caja/bancos.

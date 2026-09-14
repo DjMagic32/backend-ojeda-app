@@ -45,6 +45,7 @@ from .views import (
     CajaView,
     VentaCajaView,
     CuentaPorCobrarView,
+    CuentaPorPagarView,
     ArticuloUsadoViewSet,
 )
 
@@ -98,6 +99,10 @@ urlpatterns = [
     path('cuentas-cobrar/<int:pk>/', CuentaPorCobrarView.as_view(http_method_names=['get', 'head', 'options']), name='detalle-cuenta-cobrar'),
     path('cuentas-cobrar/operaciones/', CuentaPorCobrarView.as_view(http_method_names=['post', 'options']), name='operaciones-cuenta-cobrar'),
     path('cuentas-cobrar/operaciones/<uuid:clave>/cancelar/', CuentaPorCobrarView.as_view(http_method_names=['post', 'options']), name='cancelar-operacion-cuenta-cobrar'),
+    path('cuentas-pagar/', CuentaPorPagarView.as_view(http_method_names=['get', 'head', 'options']), name='cuentas-pagar'),
+    path('cuentas-pagar/<int:pk>/', CuentaPorPagarView.as_view(http_method_names=['get', 'head', 'options']), name='detalle-cuenta-pagar'),
+    path('cuentas-pagar/operaciones/', CuentaPorPagarView.as_view(http_method_names=['post', 'options']), name='operaciones-cuenta-pagar'),
+    path('cuentas-pagar/operaciones/<uuid:clave>/cancelar/', CuentaPorPagarView.as_view(http_method_names=['post', 'options']), name='cancelar-operacion-cuenta-pagar'),
     path('ventas-presenciales/operaciones/<uuid:clave>/cancelar/', OperacionVentaPresencialView.as_view(), name='cancelar-operacion-venta'),
     path('admin/run-migrations/', RunMigrationsView.as_view(), name='run-migrations'),
 ]

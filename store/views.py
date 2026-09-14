@@ -94,6 +94,7 @@ from .serializers import (
     OperacionCajaSerializer,
     MovimientoCajaSerializer,
     OperacionCuentaPorCobrarSerializer,
+    OperacionCuentaPorPagarSerializer,
 )
 from .models import MovimientoStock, StoreOrderItem, ArticuloUsado
 from .permissions import EsTienda
@@ -113,6 +114,8 @@ from .services.cuentas import (
     anular_cuenta, crear_cuenta_por_cobrar, cuentas_por_cobrar_disponible,
     registrar_abono, resumen_abono, resumen_cuenta,
 )
+from .models import CuentaPorPagar, OperacionCuentaPorPagar
+from .services import pagos as pagos_service
 from .upload_validation import validate_chat_attachment, validate_image_upload
 
 logger = logging.getLogger(__name__)
@@ -976,6 +979,70 @@ class CuentaPorCobrarView(OperacionVentaPresencialView):
         try:
             resultado, repetida = confirmar_operacion(tienda.pk, datos['clave_operacion'], huella, ejecutar,
                                                        modelo=OperacionCuentaPorCobrar)
+        except (ConflictoOperacion, DjangoValidationError) as exc:
+            mensaje = exc.messages[0] if isinstance(exc, DjangoValidationError) else str(exc)
+            return Response({'detail': mensaje}, status=409 if isinstance(exc, ConflictoOperacion) else 400)
+        return Response({**resultado, 'clave_operacion': str(datos['clave_operacion']), 'repetida': repetida}, status=200 if repetida else 201)
+
+
+class CuentaPorPagarView(OperacionVentaPresencialView):
+    serializer_class = OperacionCuentaPorPagarSerializer
+
+    def get(self, request, pk=None, **kwargs):
+        tienda = self._tienda()
+        if not pagos_service.cuentas_por_pagar_disponible():
+            return Response({'detail': 'Las cuentas por pagar aún no están disponibles.'}, status=503)
+        filtros = {}
+        if 'antes_de' in request.query_params:
+            valor = request.query_params['antes_de']
+            if not valor.isascii() or not valor.isdecimal() or len(valor) > 19 or not 0 < int(valor) <= 9223372036854775807:
+                return Response({'detail': 'El filtro no es válido.'}, status=400)
+            filtros['antes_de'] = int(valor)
+        cuentas = CuentaPorPagar.objects.filter(tienda_id=tienda.pk)
+        if pk is not None:
+            if not 0 < pk <= 9223372036854775807:
+                return Response({'detail': 'La cuenta por pagar no está disponible.'}, status=404)
+            cuenta = cuentas.filter(pk=pk).first()
+            if cuenta is None:
+                return Response({'detail': 'La cuenta por pagar no está disponible.'}, status=404)
+            abonos = cuenta.abonos.order_by('-id')[:50]
+            return Response({'cuenta': pagos_service.resumen_cuenta(cuenta),
+                             'abonos': [pagos_service.resumen_abono(a) for a in abonos]})
+        if 'estado' in request.query_params:
+            if request.query_params['estado'] not in dict(CuentaPorPagar.ESTADOS):
+                return Response({'detail': 'El estado no es válido.'}, status=400)
+            cuentas = cuentas.filter(estado=request.query_params['estado'])
+        if 'antes_de' in filtros:
+            cuentas = cuentas.filter(id__lt=filtros['antes_de'])
+        filas = list(cuentas.order_by('-id')[:21])
+        return Response({'results': [pagos_service.resumen_cuenta(c) for c in filas[:20]],
+                         'siguiente_antes_de': filas[19].pk if len(filas) > 20 else None})
+
+    def post(self, request, clave=None, **kwargs):
+        tienda = self._tienda()
+        if not pagos_service.cuentas_por_pagar_disponible():
+            return Response({'detail': 'Las cuentas por pagar aún no están disponibles.'}, status=503)
+        if clave is not None:
+            resultado = cancelar_operacion(tienda.pk, clave, modelo=OperacionCuentaPorPagar)
+            return Response({'clave_operacion': str(clave), 'cancelada': resultado is None, 'resultado': resultado})
+        serializer = self.get_serializer(data=request.data)
+        if not serializer.is_valid():
+            return Response({'detail': 'Revisa los datos de la cuenta por pagar.'}, status=400)
+        datos = serializer.validated_data
+        huella = hashlib.sha256(json.dumps({k: v for k, v in datos.items() if k != 'clave_operacion'},
+                                           sort_keys=True, default=str).encode()).hexdigest()
+
+        def ejecutar():
+            accion = datos['accion']
+            if accion == 'crear':
+                return pagos_service.crear_cuenta_por_pagar(tienda, request.user, datos)
+            if accion == 'abonar':
+                return pagos_service.registrar_abono(tienda, request.user, datos)
+            return pagos_service.anular_cuenta(tienda, request.user, datos['cuenta_id'], datos.get('motivo', ''))
+
+        try:
+            resultado, repetida = confirmar_operacion(tienda.pk, datos['clave_operacion'], huella, ejecutar,
+                                                       modelo=OperacionCuentaPorPagar)
         except (ConflictoOperacion, DjangoValidationError) as exc:
             mensaje = exc.messages[0] if isinstance(exc, DjangoValidationError) else str(exc)
             return Response({'detail': mensaje}, status=409 if isinstance(exc, ConflictoOperacion) else 400)
