@@ -749,7 +749,21 @@ cobrar/pagar): un gasto es un registro de una sola vez, sólo `crear`/`anular`.
 6. `[ ]` Filtrar por `sucursal_id`, `tipo` y `anulado` combinados; paginar más de
    20 gastos y confirmar que `siguiente_antes_de` no repite IDs.
 
-No hay pantalla en TuPlazaFront todavía para gastos: estos casos son sólo de API.
+### Pantalla en TuPlazaFront (2026-09-14)
+
+Implementada: `Expenses.tsx` (Perfil de tienda → Gastos), `app/api/expensesApi.ts`
+y `app/services/pendingExpense.ts` — mismo patrón de recuperación de operación
+interrumpida que el resto de pantallas financieras. Formulario de alta con
+tipo/categoría/monto/moneda/sucursal opcional (chips poblados desde
+`fetchMiNegocio`), historial filtrable por tipo y sucursal, botón anular por
+tarjeta (marca `anulado`, no borra).
+
+- `[x]` `npx tsc --noEmit`: 75 errores, idénticos a los preexistentes; ninguno en
+  `expensesApi.ts`, `pendingExpense.ts`, `Expenses.tsx` ni en los archivos de
+  navegación/perfil tocados.
+- `[ ]` Android: crear gasto fijo y variable, con y sin sucursal, en USD y VES;
+  anular uno y confirmar que sigue visible marcado como anulado; cortar conexión
+  tras enviar y confirmar que aparece el modal de recuperación al reabrir.
 
 ## Pruebas de aislamiento y permisos
 

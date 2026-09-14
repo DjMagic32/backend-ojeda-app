@@ -363,8 +363,10 @@ no se modificó inventario operativo y no se activaron reservas ni idempotencia.
   comparación de migración). **No se ejecutó Django, migraciones ni PostgreSQL
   real.**
 - **Pendiente:** `[ ]` desplegar y confirmar `0044` aplicada en Railway (sin
-  acceso a Railway en esta sesión). `[ ]` pantalla en TuPlazaFront. `[ ]`
-  comprobante adjunto. `[ ]` reporte de utilidad neta que combine gastos con
+  acceso a Railway en esta sesión). `[~]` pantalla en TuPlazaFront implementada
+  (`Expenses.tsx`, `expensesApi.ts`, `pendingExpense.ts`; `npx tsc --noEmit` con
+  los 75 errores preexistentes, ninguno nuevo); falta prueba real en Android.
+  `[ ]` comprobante adjunto. `[ ]` reporte de utilidad neta que combine gastos con
   ventas. `[ ]` casos PostgreSQL de concurrencia.
 
 ## Conclusión ejecutiva
@@ -532,8 +534,8 @@ cualquier corrección debe generar reverso o ajuste auditable.
 
 - `[~]` Gastos fijos y variables categorizados por negocio, sucursal y período: modelo
   `Gasto`, migración `0044`, servicio `store/services/gastos.py`, API idempotente
-  (`/api/store/gastos/`) con filtros por sucursal, tipo y estado anulado. Falta
-  pantalla en la app y validación Android/PostgreSQL.
+  (`/api/store/gastos/`) con filtros por sucursal, tipo y estado anulado, y pantalla
+  en TuPlazaFront (`Expenses.tsx`). Falta validación Android/PostgreSQL.
 - `[ ]` Adjuntar comprobantes de gasto (imagen/PDF), aplicando las mismas validaciones de
   archivos ya usadas en uploads. Se dejó fuera del primer corte porque mezclar
   `multipart/form-data` con el patrón de operación idempotente en JSON necesita

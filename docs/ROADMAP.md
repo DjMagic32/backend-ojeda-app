@@ -61,10 +61,11 @@ Contraparte en la app: `TuPlazaFront/ROADMAP.md`.
   (`AccountsReceivable.tsx`). Falta: alertas de vencimiento automáticas y
   validación Android/PostgreSQL.
 - `[~]` Gastos fijos/variables por sucursal: `Gasto`, `OperacionGasto` (migración
-  `0044`), servicio `store/services/gastos.py`, endpoints en `/api/store/gastos/`.
-  Falta: comprobante adjunto (foto/PDF — se dejó fuera de este primer corte para
-  no mezclar subida de archivos con el patrón de operación idempotente en JSON),
-  reporte de utilidad neta y validación Android/PostgreSQL.
+  `0044`), servicio `store/services/gastos.py`, endpoints en `/api/store/gastos/`
+  y pantalla en TuPlazaFront (`Expenses.tsx`). Falta: comprobante adjunto (foto/PDF
+  — se dejó fuera de este primer corte para no mezclar subida de archivos con el
+  patrón de operación idempotente en JSON), reporte de utilidad neta y validación
+  Android/PostgreSQL.
 - `[~]` Diferencial cambiario realizado al liquidar una cuenta
   (ΔC = monto_usd_abonado·(T2−T1)): implementado en `registrar_abono()`,
   cubierto por 12 pruebas con dobles de ORM. Sigue faltando un libro mayor
@@ -108,7 +109,7 @@ Contraparte en la app: `TuPlazaFront/ROADMAP.md`.
 2. Correr la suite PostgreSQL de integración ya escrita — es lo único que puede
    mover los `[~]` actuales a `[x]`, incluyendo el bloque de cuentas por
    cobrar recién añadido.
-3. Pantalla de gastos en TuPlazaFront (la API ya existe) y comprobante adjunto
-   para cada gasto. Proveedores con condiciones de pago (sin datos fiscales,
-   ver sección de alcance) — hoy `CuentaPorPagar` sólo guarda nombre y teléfono
-   libres, sin entidad `Proveedor` propia.
+3. Comprobante adjunto para cada gasto (foto/PDF) y reporte de utilidad neta que
+   combine gastos con ventas. Proveedores con condiciones de pago (sin datos
+   fiscales, ver sección de alcance) — hoy `CuentaPorPagar` sólo guarda nombre y
+   teléfono libres, sin entidad `Proveedor` propia.
