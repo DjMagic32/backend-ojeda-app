@@ -91,8 +91,9 @@ Contraparte en la app: `TuPlazaFront/ROADMAP.md`.
 - `[ ]` CRM: ficha de cliente por negocio, historial, RFM, campañas.
 - `[-]` Cashea (BNPL) — depende de contrato/API/credenciales del proveedor.
 - `[-]` Pago Móvil C2P/P2C automatizado — depende de acuerdos bancarios.
-- `[-]` Facturación fiscal SENIAT / bridge de impresoras fiscales — requiere
-  asesoría legal antes de escribir código.
+- `[-]` Facturación fiscal SENIAT / bridge de impresoras fiscales — **fuera de
+  alcance de producto** (decisión 2026-09-14): TuPlaza es para emprendimientos
+  no fiscalizados, no sólo pospuesto por asesoría legal pendiente.
 - `[ ]` Asistente IA tipo Nina (Text-to-SQL de solo lectura, réplica separada,
   guardrails de tenant obligatorio).
 

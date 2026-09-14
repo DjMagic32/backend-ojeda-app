@@ -358,7 +358,8 @@ ERP de una tienda ni exigirles configurar una tienda para vender en el marketpla
 4. Usuarios internos de la tienda, permisos granulares y auditoría.
 5. Importación desde Excel/CSV para que un negocio pueda migrar sin cargar todo a mano.
 6. Funcionalidades verticales: variantes, lotes, recetas, seriales y unidades.
-7. Facturación fiscal e integraciones financieras, que deben ir después del núcleo.
+7. Integraciones financieras (BNPL, Pago Móvil directo), después del núcleo. La
+   facturación fiscal SENIAT está fuera de alcance de producto (ver sección 11).
 
 ## 1. Alcance del negocio y aislamiento de datos
 
@@ -477,8 +478,9 @@ cualquier corrección debe generar reverso o ajuste auditable.
 
 ## 6. Compras, proveedores y cuentas pendientes
 
-- `[ ]` Proveedores con datos fiscales, contactos y condiciones de pago (hoy
-  `CuentaPorPagar` sólo guarda nombre y teléfono libres, sin entidad propia).
+- `[ ]` Proveedores con contactos y condiciones de pago (sin datos fiscales
+  obligatorios: TuPlaza es para emprendimientos no fiscalizados, ver sección 11).
+  Hoy `CuentaPorPagar` sólo guarda nombre y teléfono libres, sin entidad propia.
 - `[ ]` Orden de compra, recepción parcial/total y entrada automática al inventario.
 - `[~]` Cuentas por pagar con vencimiento, abonos, saldo y alertas: modelo,
   migración `0043`, servicio con abonos parciales/totales y diferencial
@@ -547,20 +549,26 @@ cualquier corrección debe generar reverso o ajuste auditable.
 
 ## 11. Fiscalidad e integraciones externas
 
-- `[ ]` Definir con asesoría local el alcance fiscal de TuPlaza y las obligaciones de cada
-  tipo de negocio.
-- `[ ]` Numeración fiscal, impuestos, libros de compra/venta y retenciones según aplique.
-- `[ ]` Integración con un proveedor de facturación electrónica autorizado, si el negocio
-  lo necesita.
-- `[ ]` Bridge local para impresoras fiscales, sólo después de validar modelos de hardware
-  y requisitos regulatorios.
+**Decisión de producto (2026-09-14):** TuPlaza está dirigida a tiendas y
+emprendimientos **no fiscalizados** en Venezuela. Ningún dato fiscal (RIF, razón
+social fiscal, domicilio fiscal) debe ser obligatorio en ninguna entidad —
+`Tienda`, `Negocio`, clientes de `CuentaPorCobrar`, proveedores de
+`CuentaPorPagar`, etc. Toda la homologación SENIAT queda **fuera de alcance**,
+no sólo pospuesta: el usuario objetivo no la necesita.
+
+- `[-]` Numeración fiscal, impuestos, libros de compra/venta y retenciones —
+  fuera de alcance: el negocio objetivo no está fiscalizado.
+- `[-]` Integración con un proveedor de facturación electrónica autorizado —
+  fuera de alcance por el mismo motivo.
+- `[-]` Bridge local para impresoras fiscales — fuera de alcance.
 - `[-]` Integración BNPL/Cashea: depende de contrato, documentación, credenciales,
   compliance y aprobación del proveedor.
 - `[-]` Integración directa con bancos/Pago Móvil: depende de disponibilidad de APIs,
   acuerdos comerciales y requisitos de seguridad.
 
-No conviene prometer homologación fiscal ni pagos automáticos sólo por implementar los
-endpoints: ambos requieren validación legal, contractual y operativa en Venezuela.
+Si el alcance de producto cambia hacia negocios fiscalizados, revisar este bloque
+antes de retomarlo — hoy no hay ninguna asesoría legal ni requisito de negocio
+que lo justifique.
 
 ## 12. Analítica e inteligencia artificial
 
@@ -658,7 +666,7 @@ Reglas importantes:
 ### Fase 4 — Ecosistema
 
 - `[ ]` CRM, segmentos, fidelización y campañas con consentimiento.
-- `[ ]` Facturación fiscal/electrónica según el caso real de cada negocio.
+- `[-]` Facturación fiscal/electrónica — fuera de alcance de producto (ver sección 11).
 - `[ ]` Integraciones bancarias o BNPL con acuerdos firmados.
 - `[ ]` IA analítica de solo lectura después de tener datos financieros confiables.
 
