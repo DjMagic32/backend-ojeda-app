@@ -676,8 +676,23 @@ las diferencias.
    `pagada`, reintento no recalcula con otra tasa, dos abonos simultáneos en
    PostgreSQL, cuenta de otra tienda, anular con/sin abonos, sin tasa registrada).
 
-No hay pantalla en TuPlazaFront todavía para cuentas por pagar: estos casos son
-sólo de API.
+### Pantalla en TuPlazaFront (2026-09-14)
+
+Implementada: `AccountsPayable.tsx` (Perfil de tienda → Cuentas por pagar),
+`app/api/payablesApi.ts` y `app/services/pendingPayable.ts` — copia exacta del
+patrón de `AccountsReceivable.tsx`/`accountsApi.ts`/`pendingAccount.ts`, con
+`proveedor_nombre`/`proveedor_telefono` en vez de cliente y sin `order_id`.
+Muestra el diferencial cambiario de cada abono tal como lo devuelve la API
+(signo invertido respecto a cuentas por cobrar: negativo = pérdida cuando la
+tasa subió).
+
+- `[x]` `npx tsc --noEmit`: 75 errores, idénticos a los preexistentes; ninguno en
+  `payablesApi.ts`, `pendingPayable.ts`, `AccountsPayable.tsx` ni en los archivos
+  de navegación/perfil tocados.
+- `[ ]` Android: mismos casos que la pantalla de cuentas por cobrar (crear,
+  abonar parcial/total, anular, recuperación tras cortar conexión), verificando
+  que un abono con tasa más alta que la de emisión se muestra como pérdida
+  (monto negativo), no como ganancia.
 
 ## Pruebas de aislamiento y permisos
 

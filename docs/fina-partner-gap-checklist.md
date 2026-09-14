@@ -329,8 +329,11 @@ no se modificó inventario operativo y no se activaron reservas ni idempotencia.
   migración). **No se ejecutó Django, migraciones ni PostgreSQL real.**
 - **Pendiente:** `[ ]` desplegar y confirmar `0043` aplicada en Railway (sin
   acceso a Railway en esta sesión, mismo bloqueo documentado en pasos anteriores).
-  `[ ]` pantalla en TuPlazaFront. `[ ]` entidad `Proveedor` propia con datos
-  fiscales. `[ ]` alertas de vencimiento automáticas. `[ ]` casos PostgreSQL de
+  `[~]` pantalla en TuPlazaFront implementada (`AccountsPayable.tsx`,
+  `payablesApi.ts`, `pendingPayable.ts`; `npx tsc --noEmit` con los 75 errores
+  preexistentes, ninguno nuevo); falta prueba real en Android. `[ ]` entidad
+  `Proveedor` propia con datos fiscales. `[ ]` alertas de vencimiento
+  automáticas. `[ ]` casos PostgreSQL de
   concurrencia.
 
 ## Conclusión ejecutiva
@@ -480,8 +483,8 @@ cualquier corrección debe generar reverso o ajuste auditable.
 - `[~]` Cuentas por pagar con vencimiento, abonos, saldo y alertas: modelo,
   migración `0043`, servicio con abonos parciales/totales y diferencial
   cambiario (signo invertido respecto a cuentas por cobrar), API idempotente
-  (`/api/store/cuentas-pagar/`). Falta pantalla en la app, alertas de
-  vencimiento automáticas y validación Android/PostgreSQL.
+  (`/api/store/cuentas-pagar/`) y pantalla en TuPlazaFront (`AccountsPayable.tsx`).
+  Falta alertas de vencimiento automáticas y validación Android/PostgreSQL.
 - `[~]` Crédito comercial a clientes y cuentas por cobrar: modelo, migración `0042`,
   servicio con abonos parciales/totales y diferencial cambiario, API idempotente
   (`/api/store/cuentas-cobrar/`) y pantalla en TuPlazaFront (`AccountsReceivable.tsx`).

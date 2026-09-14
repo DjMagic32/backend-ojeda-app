@@ -50,8 +50,9 @@ Contraparte en la app: `TuPlazaFront/ROADMAP.md`.
   `OperacionCuentaPorPagar` (migración `0043`), servicio `store/services/pagos.py`
   (mismo patrón que cuentas por cobrar, con el signo del diferencial cambiario
   invertido: tasa al alza = pérdida, no ganancia), endpoints en
-  `/api/store/cuentas-pagar/`. Falta: proveedores con datos fiscales/condiciones de
-  pago (hoy es sólo nombre/teléfono libre), órdenes de compra, alertas de
+  `/api/store/cuentas-pagar/` y pantalla en TuPlazaFront (`AccountsPayable.tsx`).
+  Falta: proveedores con datos fiscales/condiciones de pago (hoy es sólo
+  nombre/teléfono libre), órdenes de compra, alertas de
   vencimiento y validación Android/PostgreSQL.
 - `[~]` Clientes con crédito comercial y cuentas por cobrar: `CuentaPorCobrar`,
   `AbonoCuentaPorCobrar`, `OperacionCuentaPorCobrar` (migración `0042`),
