@@ -1,32 +1,69 @@
+import logging
+import json
+import hashlib
+import secrets
+from io import StringIO
+
+from django.conf import settings
+from django.core.management import call_command
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.renderers import JSONRenderer
+from rest_framework.permissions import IsAuthenticated, AllowAny, IsAdminUser
 from rest_framework import viewsets, status, permissions, generics
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.exceptions import ValidationError
 from drf_spectacular.utils import extend_schema
 
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db import IntegrityError, transaction
+from django.db.models import Q
+from django.utils import timezone
+from rest_framework.decorators import action
+
 from .models import (
     Producto,
     Categoria,
+    Conversation,
+    ExpoPushToken,
     Carrito,
     ItemCarrito,
+    Message,
     Pedido,
     Tienda,
+    Negocio,
+    Sucursal,
+    Almacen,
+    InventarioAlmacen,
+    TransferenciaInventario,
     ProductoTienda,
     Comentario,
     ComentarioProducto,
     Referencia,
+    TasaCambio,
     Wallet,
     Usuario,
     StoreOrder,
+    OrderPayment,
+    ProductoFavorito,
+    Notificacion,
 )
 from .serializers import (
     ProductoSerializer,
     CategoriaSerializer,
     CarritoSerializer,
+    ConversationCreateSerializer,
+    ConversationSerializer,
+    ExpoPushTokenSerializer,
     ItemCarritoSerializer,
+    MessageSerializer,
     PedidoSerializer,
+    StoreDashboardSerializer,
+    TasaCambioSerializer,
     TiendaSerializer,
+    TiendaPublicSerializer,
+    NegocioSerializer,
+    SucursalSerializer,
+    AlmacenSerializer,
     ProductoTiendaSerializer,
     ComentarioSerializer,
     ComentarioProductoSerializer,
@@ -36,16 +73,253 @@ from .serializers import (
     RegisterUserSerializer,
     CarritoItemAddSerializer,
     CarritoItemRemoveSerializer,
+    CarritoItemUpdateSerializer,
     WalletActionRequestSerializer,
     UsuarioDetalleRequestSerializer,
     StoreOrderSerializer,
+    OrderPaymentSerializer,
+    ProductoFavoritoSerializer,
+    NotificacionSerializer,
+    ReporteSerializer,
+    InventarioAlmacenSerializer,
+    TransferenciaInventarioSerializer,
+    TransferenciaInventarioCreateSerializer,
+    MovimientoStockSerializer,
+    HistorialStockQuerySerializer,
+    AjusteStockSerializer,
+    VentaPresencialSerializer,
+    OperacionVentaPresencialSerializer,
+    ArticuloUsadoSerializer,
+    VentaCajaSerializer,
+    OperacionCajaSerializer,
+    MovimientoCajaSerializer,
+    OperacionCuentaPorCobrarSerializer,
+    OperacionCuentaPorPagarSerializer,
+    OperacionGastoSerializer,
 )
+from .models import MovimientoStock, StoreOrderItem, ArticuloUsado
 from .permissions import EsTienda
+from .services.realtime import broadcast_chat_message, broadcast_chat_read, notify_user
+from .services.push import send_push_to_user
+from .services.inventario import registrar_movimiento, transferir_stock
+from .services.ventas import registrar_venta_presencial
+from .services.historial import consultar_movimientos
+from .services.ventas_idempotentes import (
+    cancelar_operacion, confirmar_operacion, huella_venta,
+    idempotencia_disponible, ConflictoOperacion,
+)
+from .models import SesionCaja, OperacionCaja
+from .services.caja import caja_disponible, ejecutar_operacion_caja, registrar_venta_en_caja, resumen_caja
+from .models import CuentaPorCobrar, OperacionCuentaPorCobrar
+from .services.cuentas import (
+    anular_cuenta, crear_cuenta_por_cobrar, cuentas_por_cobrar_disponible,
+    registrar_abono, resumen_abono, resumen_cuenta,
+)
+from .models import CuentaPorPagar, OperacionCuentaPorPagar
+from .services import pagos as pagos_service
+from .models import Gasto, OperacionGasto
+from .services import gastos as gastos_service
+from .upload_validation import validate_chat_attachment, validate_image_upload
+
+logger = logging.getLogger(__name__)
+
+
+def _negocios_del_usuario(user):
+    """Negocios donde el usuario es propietario o miembro activo."""
+    if getattr(user, 'is_staff', False):
+        return Negocio.objects.all()
+    return Negocio.objects.filter(
+        Q(tienda__usuario=user)
+        | Q(miembros__usuario=user, miembros__activo=True)
+    ).distinct()
+
+
+class SucursalViewSet(viewsets.ModelViewSet):
+    """CRUD protegido de sucursales del negocio del usuario autenticado."""
+
+    serializer_class = SucursalSerializer
+    permission_classes = [IsAuthenticated]
+    http_method_names = ['get', 'post', 'patch', 'head', 'options']
+    queryset = Sucursal.objects.select_related('negocio').prefetch_related('almacenes')
+
+    def get_queryset(self):
+        return self.queryset.filter(negocio__in=_negocios_del_usuario(self.request.user))
+
+    def perform_create(self, serializer):
+        negocio = _negocios_del_usuario(self.request.user).first()
+        if negocio is None:
+            raise ValidationError('El usuario no pertenece a un negocio.')
+        try:
+            serializer.save(negocio=negocio)
+        except IntegrityError as exc:
+            raise ValidationError('Ya existe una sucursal con ese código.') from exc
+
+    def perform_update(self, serializer):
+        try:
+            serializer.save()
+        except IntegrityError as exc:
+            raise ValidationError('Ya existe una sucursal con ese código.') from exc
+
+
+class AlmacenViewSet(viewsets.ModelViewSet):
+    """CRUD protegido de almacenes pertenecientes a sucursales propias."""
+
+    serializer_class = AlmacenSerializer
+    permission_classes = [IsAuthenticated]
+    http_method_names = ['get', 'post', 'patch', 'head', 'options']
+    queryset = Almacen.objects.select_related('sucursal', 'sucursal__negocio')
+
+    def get_queryset(self):
+        return self.queryset.filter(
+            sucursal__negocio__in=_negocios_del_usuario(self.request.user)
+        )
+
+    def perform_create(self, serializer):
+        sucursal = serializer.validated_data['sucursal']
+        if not _negocios_del_usuario(self.request.user).filter(pk=sucursal.negocio_id).exists():
+            raise ValidationError('La sucursal no pertenece a tu negocio.')
+        try:
+            serializer.save()
+        except IntegrityError as exc:
+            raise ValidationError('Ya existe un almacén con ese código en la sucursal.') from exc
+
+    def perform_update(self, serializer):
+        sucursal = serializer.validated_data.get('sucursal')
+        if sucursal is not None and not _negocios_del_usuario(self.request.user).filter(
+            pk=sucursal.negocio_id
+        ).exists():
+            raise ValidationError('La sucursal no pertenece a tu negocio.')
+        try:
+            serializer.save()
+        except IntegrityError as exc:
+            raise ValidationError('Ya existe un almacén con ese código en la sucursal.') from exc
+
+
+class InventarioAlmacenViewSet(viewsets.ReadOnlyModelViewSet):
+    """Consulta protegida de existencias por almacén del negocio autenticado."""
+
+    serializer_class = InventarioAlmacenSerializer
+    permission_classes = [IsAuthenticated]
+    queryset = InventarioAlmacen.objects.select_related(
+        'producto', 'almacen', 'almacen__sucursal'
+    )
+
+    def get_queryset(self):
+        queryset = self.queryset.filter(
+            almacen__sucursal__negocio__in=_negocios_del_usuario(self.request.user)
+        )
+        producto_id = self.request.query_params.get('producto')
+        almacen_id = self.request.query_params.get('almacen')
+        if producto_id:
+            queryset = queryset.filter(producto_id=producto_id)
+        if almacen_id:
+            queryset = queryset.filter(almacen_id=almacen_id)
+        return queryset
+
+
+class TransferenciaInventarioViewSet(viewsets.ModelViewSet):
+    """Transferencias atómicas entre almacenes del negocio autenticado."""
+
+    permission_classes = [IsAuthenticated]
+    http_method_names = ['get', 'post', 'head', 'options']
+    queryset = TransferenciaInventario.objects.select_related(
+        'producto', 'almacen_origen', 'almacen_destino', 'creado_por'
+    )
+
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return TransferenciaInventarioCreateSerializer
+        return TransferenciaInventarioSerializer
+
+    def get_queryset(self):
+        return self.queryset.filter(
+            producto__tienda__negocio__in=_negocios_del_usuario(self.request.user)
+        )
+
+    def create(self, request, *args, **kwargs):
+        input_serializer = self.get_serializer(data=request.data)
+        input_serializer.is_valid(raise_exception=True)
+        data = input_serializer.validated_data
+        negocios = _negocios_del_usuario(request.user)
+
+        producto = (
+            ProductoTienda.objects.select_related('tienda')
+            .filter(pk=data['producto_id'], tienda__negocio__in=negocios)
+            .first()
+        )
+        if producto is None:
+            raise ValidationError('El producto no pertenece a un negocio disponible.')
+
+        almacenes = {
+            almacen.pk: almacen
+            for almacen in Almacen.objects.select_related('sucursal__negocio').filter(
+                pk__in=[data['almacen_origen_id'], data['almacen_destino_id']],
+                activo=True,
+                sucursal__activo=True,
+                sucursal__negocio__in=negocios,
+            )
+        }
+        if len(almacenes) != 2:
+            raise ValidationError('Los almacenes deben pertenecer a tu negocio y estar activos.')
+
+        origen = almacenes[data['almacen_origen_id']]
+        destino = almacenes[data['almacen_destino_id']]
+        try:
+            transferencia = transferir_stock(
+                producto=producto,
+                almacen_origen=origen,
+                almacen_destino=destino,
+                cantidad=data['cantidad'],
+                usuario=request.user,
+                notas=data.get('notas', ''),
+            )
+        except DjangoValidationError as exc:
+            raise ValidationError(exc.messages[0] if exc.messages else 'No se pudo transferir el inventario.')
+
+        return Response(
+            TransferenciaInventarioSerializer(transferencia).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class RunMigrationsView(generics.GenericAPIView):
+    """Endpoint temporal para aplicar migraciones durante el desarrollo.
+
+    No se habilita sin ``DJANGO_MIGRATION_ENDPOINT_KEY`` y sólo acepta POST.
+    ``migrate`` aplica migraciones pendientes; no elimina tablas ni datos por sí
+    mismo. Esta ruta debe retirarse antes de publicar la aplicación.
+    """
+
+    permission_classes = [AllowAny]
+
+    def post(self, request, *args, **kwargs):
+        configured_key = getattr(settings, 'DJANGO_MIGRATION_ENDPOINT_KEY', '')
+        provided_key = request.headers.get('X-Migration-Key', '')
+        if not configured_key or not provided_key or not secrets.compare_digest(
+            provided_key, configured_key
+        ):
+            return Response({'detail': 'No autorizado.'}, status=status.HTTP_403_FORBIDDEN)
+
+        output = StringIO()
+        try:
+            call_command('migrate', '--noinput', stdout=output)
+        except Exception:
+            logger.exception('Falló la ejecución remota de migraciones.')
+            return Response(
+                {'detail': 'No se pudieron ejecutar las migraciones.'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        return Response({
+            'detail': 'Migraciones ejecutadas correctamente.',
+            'salida': output.getvalue().strip(),
+        })
 
 
 class CreateUserView(generics.GenericAPIView):
     permission_classes = [permissions.AllowAny]
     serializer_class = UsuarioSerializer
+    throttle_scope = 'registration'
 
     @extend_schema(
         request=RegisterUserSerializer,
@@ -66,60 +340,150 @@ class CreateUserView(generics.GenericAPIView):
         data['email'] = email  # Guardamos el email en minúsculas
         data['username'] = email  # Usamos el email como username
 
-        # Creamos el usuario manualmente sin guardarlo aún
-        usuario = Usuario(
-            email=email,
-            username=email,
-            first_name=data.get('nombre', ''),  # Corregimos el nombre
-            last_name=data.get('apellido', ''),  # Corregimos el apellido
-            rol=data.get('rol', Usuario.ES_CLIENTE),  # Valor por defecto
-            telefono=data.get('telefono', ''),  # Agregamos el teléfono
-            genero=data.get('genero', None),  # Agregamos el género
-            edad=data.get('edad', None),  # Agregamos la edad
-            cedula_pasaporte=data.get('cedula_pasaporte', None),  # Agregamos la cédula/pasaporte
-        )
-        usuario.set_password(data['password'])  # Hasheamos la contraseña
-        usuario.save()  # Guardamos el usuario en la base de datos
+        try:
+            with transaction.atomic():
+                # Creamos el usuario manualmente sin guardarlo aún
+                usuario = Usuario(
+                    email=email,
+                    username=email,
+                    first_name=data.get('nombre', ''),  # Corregimos el nombre
+                    last_name=data.get('apellido', ''),  # Corregimos el apellido
+                    rol=data.get('rol', Usuario.ES_CLIENTE),  # Valor por defecto
+                    telefono=data.get('telefono', ''),  # Agregamos el teléfono
+                    genero=data.get('genero', None),  # Agregamos el género
+                    edad=data.get('edad', None),  # Agregamos la edad
+                    cedula_pasaporte=data.get('cedula_pasaporte', None),  # Agregamos la cédula/pasaporte
+                    ingresos_minimos_mensuales=data.get('ingresos_minimos_mensuales') or None,
+                )
+                usuario.set_password(data['password'])  # Hasheamos la contraseña
+                usuario.save()  # Guardamos el usuario en la base de datos
 
-        # Si el usuario es de tipo TIENDA, creamos también la tienda
-        if usuario.rol == Usuario.ES_TIENDA:
-            tienda_data = {
-                'usuario': usuario.id,
-                'nombre': data.get('nombre_tienda', ''),
-                'direccion': data.get('direccion', ''),
-                'telefono': data.get('telefono_tienda', ''),
-                'informacion_fiscal': data.get('informacion_fiscal', ''),
-            }
-            tienda_serializer = TiendaSerializer(data=tienda_data)
-            if tienda_serializer.is_valid():
-                tienda_serializer.save()
-            else:
-                usuario.delete()  # Eliminamos el usuario si la tienda falla
-                return Response(tienda_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+                # Si el usuario es de tipo TIENDA, creamos también la tienda
+                if usuario.rol == Usuario.ES_TIENDA:
+                    tienda_data = {
+                        'usuario': usuario.id,
+                        'nombre': data.get('nombre_tienda') or '',
+                        'direccion': data.get('direccion') or '',
+                        'telefono': data.get('telefono_tienda') or '',
+                        'informacion_fiscal': data.get('informacion_fiscal') or '',
+                        'ubicacion_lat': data.get('ubicacion_lat'),
+                        'ubicacion_lng': data.get('ubicacion_lng'),
+                    }
+                    if tienda_data['ubicacion_lat'] is not None and tienda_data['ubicacion_lng'] is not None:
+                        from django.utils import timezone
+                        tienda_data['ubicacion_actualizada'] = timezone.now()
+                    tienda_serializer = TiendaSerializer(data=tienda_data)
+                    if tienda_serializer.is_valid():
+                        tienda_serializer.save()
+                    else:
+                        raise ValidationError(tienda_serializer.errors)
+        except ValidationError as exc:
+            return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
+        except IntegrityError:
+            # Protege también la carrera entre la validación y el guardado.
+            return Response(
+                {'cedula_pasaporte': ['Esta cédula o pasaporte ya está registrado.']},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         # Serializamos el usuario ya creado para devolverlo en la respuesta
         usuario_serializer = UsuarioSerializer(usuario)
         return Response(usuario_serializer.data, status=status.HTTP_201_CREATED)
     
 
+class DriverDocumentosView(generics.GenericAPIView):
+    permission_classes = [IsAuthenticated]
+
+    CAMPOS = ('cedula_foto_frente', 'cedula_foto_reverso', 'licencia_foto')
+
+    @extend_schema(
+        description="Sube las fotos de cédula (frente/reverso) y licencia del conductor.",
+    )
+    def patch(self, request):
+        from store.models import DriverProfile
+
+        profile, _ = DriverProfile.objects.get_or_create(usuario=request.user)
+        recibidos = []
+        for campo in self.CAMPOS:
+            archivo = request.FILES.get(campo)
+            if archivo:
+                try:
+                    validate_image_upload(archivo)
+                except DjangoValidationError as exc:
+                    return Response(
+                        {campo: exc.messages or ['La imagen no es válida.']},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                setattr(profile, campo, archivo)
+                recibidos.append(campo)
+        if not recibidos:
+            return Response(
+                {'error': 'Envía al menos una foto (cedula_foto_frente, cedula_foto_reverso o licencia_foto).'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        profile.save(update_fields=recibidos + ['actualizado'])
+        return Response({
+            'ok': True,
+            'recibidos': recibidos,
+            'is_complete': profile.is_complete,
+        })
+
+
+class EmailDisponibleView(generics.GenericAPIView):
+    permission_classes = [permissions.AllowAny]
+    throttle_scope = 'email_check'
+
+    @extend_schema(
+        description="Indica si un email ya está registrado (para validar en vivo el registro).",
+    )
+    def get(self, request):
+        email = (request.query_params.get('email') or '').strip().lower()
+        if not email:
+            return Response(
+                {'error': 'email es requerido'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        existe = Usuario.objects.filter(email=email).exists()
+        return Response({'email': email, 'disponible': not existe})
+
+
 class UsuarioViewSet(viewsets.ModelViewSet):
-    #permission_classes = [IsAuthenticated]
-    queryset = Usuario.objects.all()
+    permission_classes = [IsAuthenticated]
     serializer_class = UsuarioSerializer
+    # El alta y la baja de cuentas no se hacen por este endpoint. El registro
+    # tiene su flujo propio y desactivar cuentas debe ser una acción explícita.
+    http_method_names = ['get', 'put', 'patch', 'head', 'options']
+
+    def get_queryset(self):
+        # Sin esto, cualquier usuario autenticado podía leer, editar o
+        # borrar la cuenta de CUALQUIER otro usuario por id (broken access
+        # control). Se limita a la propia cuenta salvo que sea staff.
+        user = self.request.user
+        if user.is_staff:
+            return Usuario.objects.all()
+        return Usuario.objects.filter(pk=user.pk)
 
 class CategoriaViewSet(viewsets.ModelViewSet):
-    #permission_classes = [IsAuthenticated]
     queryset = Categoria.objects.all()
     serializer_class = CategoriaSerializer
 
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [AllowAny()]
+        return [IsAdminUser()]
+
 class ProductoViewSet(viewsets.ModelViewSet):
-    #permission_classes = [IsAuthenticated]
     queryset = Producto.objects.all()
     serializer_class = ProductoSerializer
 
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [AllowAny()]
+        return [IsAdminUser()]
+
 class CarritoView(generics.GenericAPIView):
     serializer_class = CarritoSerializer
-    # permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated]
 
     @extend_schema(responses=CarritoSerializer)
     def get(self, request):
@@ -137,15 +501,15 @@ class CarritoView(generics.GenericAPIView):
         cantidad = payload.validated_data.get('cantidad', 1)
 
         try:
-            producto = Producto.objects.get(id=producto_id)
-        except Producto.DoesNotExist:
+            producto = ProductoTienda.objects.get(id=producto_id)
+        except ProductoTienda.DoesNotExist:
             return Response(
                 {'error': 'Producto no encontrado'},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
         item, created = ItemCarrito.objects.get_or_create(
-            carrito=carrito, producto=producto
+            carrito=carrito, producto_tienda=producto
         )
         if not created:
             item.cantidad += cantidad
@@ -153,6 +517,36 @@ class CarritoView(generics.GenericAPIView):
 
         serializer = CarritoSerializer(carrito)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    @extend_schema(request=CarritoItemUpdateSerializer, responses=CarritoSerializer)
+    def patch(self, request):
+        payload = CarritoItemUpdateSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+
+        carrito, _ = Carrito.objects.get_or_create(usuario=request.user)
+        producto_id = payload.validated_data['producto_id']
+        cantidad = payload.validated_data['cantidad']
+
+        try:
+            producto = ProductoTienda.objects.get(id=producto_id)
+        except ProductoTienda.DoesNotExist:
+            return Response(
+                {'error': 'Producto no encontrado'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            item = ItemCarrito.objects.get(carrito=carrito, producto_tienda=producto)
+        except ItemCarrito.DoesNotExist:
+            return Response(
+                {'error': 'El producto no está en el carrito'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        item.cantidad = cantidad
+        item.save()
+        serializer = CarritoSerializer(carrito)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
     @extend_schema(request=CarritoItemRemoveSerializer, responses=CarritoSerializer)
     def delete(self, request):
@@ -163,15 +557,15 @@ class CarritoView(generics.GenericAPIView):
         producto_id = payload.validated_data['producto_id']
 
         try:
-            producto = Producto.objects.get(id=producto_id)
-        except Producto.DoesNotExist:
+            producto = ProductoTienda.objects.get(id=producto_id)
+        except ProductoTienda.DoesNotExist:
             return Response(
                 {'error': 'Producto no encontrado'},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
         try:
-            item = ItemCarrito.objects.get(carrito=carrito, producto=producto)
+            item = ItemCarrito.objects.get(carrito=carrito, producto_tienda=producto)
         except ItemCarrito.DoesNotExist:
             return Response(
                 {'error': 'El producto no está en el carrito'},
@@ -184,7 +578,7 @@ class CarritoView(generics.GenericAPIView):
 
 class PedidoView(generics.GenericAPIView):
     serializer_class = PedidoSerializer
-    # permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated]
 
     @extend_schema(responses=PedidoSerializer)
     def post(self, request):
@@ -210,10 +604,26 @@ class PedidoView(generics.GenericAPIView):
         return Response(serializer.data)
 
 class TiendaViewSet(viewsets.ModelViewSet):
-    
-    #permission_classes = [EsTienda, IsAuthenticated]
     queryset = Tienda.objects.all()
     serializer_class = TiendaSerializer
+
+    def get_serializer_class(self):
+        if self.action in ('list', 'retrieve'):
+            return TiendaPublicSerializer
+        return TiendaSerializer
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [AllowAny()]
+        return [IsAuthenticated(), EsTienda()]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if self.action in ('update', 'partial_update', 'destroy'):
+            user = self.request.user
+            if not user.is_staff:
+                queryset = queryset.filter(usuario=user)
+        return queryset
 
     def perform_create(self, serializer):
         serializer.save(usuario=self.request.user)
@@ -261,18 +671,478 @@ class ProductoTiendaViewSet(viewsets.ModelViewSet):
         tienda = self._get_tienda_for_request()
         serializer.save(tienda=tienda)
 
+    def _get_own_product(self):
+        tienda = self._get_tienda_for_request()
+        producto = self.get_object()
+        if producto.tienda_id != tienda.id:
+            raise ValidationError('Este producto no pertenece a tu tienda.')
+        return producto
+
+    @action(detail=True, methods=['post'], url_path='ajustar-stock',
+            permission_classes=[IsAuthenticated, EsTienda])
+    def ajustar_stock(self, request, pk=None):
+        producto = self._get_own_product()
+        serializer = AjusteStockSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        almacen = None
+        if data.get('almacen_id') is not None:
+            try:
+                almacen = Almacen.objects.select_related('sucursal__negocio').get(
+                    pk=data['almacen_id'],
+                    activo=True,
+                    sucursal__activo=True,
+                )
+            except Almacen.DoesNotExist as exc:
+                raise ValidationError('El almacén indicado no está disponible.') from exc
+            if almacen.sucursal.negocio.tienda_id != producto.tienda_id:
+                raise ValidationError('El almacén no pertenece a tu tienda.')
+
+        delta = data.get('delta', 0)
+        tipo = MovimientoStock.TIPO_ENTRADA if delta > 0 else MovimientoStock.TIPO_AJUSTE
+        try:
+            with transaction.atomic():
+                movimiento = registrar_movimiento(
+                    producto,
+                    tipo,
+                    delta,
+                    MovimientoStock.ORIGEN_AJUSTE_MANUAL,
+                    almacen=almacen,
+                    nuevo_stock=data.get('nuevo_stock'),
+                )
+                producto.refresh_from_db(fields=['stock'])
+                resultado = {
+                    'producto_id': producto.id,
+                    'stock': producto.stock,
+                    'movimiento': MovimientoStockSerializer(movimiento).data if movimiento else None,
+                }
+        except DjangoValidationError as exc:
+            return Response(
+                {'detail': exc.messages[0] if exc.messages else 'No se pudo ajustar el stock.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response(resultado)
+
+    @action(detail=True, methods=['get'], url_path='movimientos',
+            permission_classes=[IsAuthenticated, EsTienda])
+    def movimientos(self, request, pk=None):
+        producto = self._get_own_product()
+        filtros = HistorialStockQuerySerializer(data=request.query_params)
+        if not filtros.is_valid():
+            mensaje = next(iter(filtros.errors.values()))[0]
+            return Response({'detail': str(mensaje)}, status=status.HTTP_400_BAD_REQUEST)
+        movimientos, siguiente = consultar_movimientos(
+            producto, filtros.validated_data, timezone.now(),
+        )
+        datos = MovimientoStockSerializer(movimientos, many=True).data
+        if filtros.validated_data['paginado']:
+            return Response({'results': datos, 'siguiente_antes_de': siguiente})
+        return Response(datos)
+
+
+class VentaPresencialCreateView(generics.GenericAPIView):
+    permission_classes = [IsAuthenticated, EsTienda]
+    serializer_class = VentaPresencialSerializer
+
+    def post(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        try:
+            tienda = Tienda.objects.get(usuario=request.user)
+        except Tienda.DoesNotExist:
+            raise ValidationError('El usuario autenticado no tiene una tienda asociada.')
+
+        try:
+            order, movimientos = registrar_venta_presencial(
+                tienda=tienda,
+                usuario=request.user,
+                items=data['items'],
+                almacen_id=data.get('almacen_id'),
+                notas=data.get('notas', ''),
+            )
+        except DjangoValidationError as exc:
+            return Response(
+                {'detail': exc.messages[0] if exc.messages else 'No se pudo registrar la venta.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response(
+            {
+                'order': StoreOrderSerializer(order, context={'request': request}).data,
+                'movimientos': MovimientoStockSerializer(movimientos, many=True).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class OperacionVentaPresencialView(generics.GenericAPIView):
+    permission_classes = [IsAuthenticated, EsTienda]
+    serializer_class = OperacionVentaPresencialSerializer
+
+    def _disponible(self):
+        return idempotencia_disponible()
+
+    def _contexto(self, data):
+        return None
+
+    def _registrar(self, tienda, usuario, data):
+        return registrar_venta_presencial(tienda, usuario, data['items'], data.get('almacen_id'), data.get('notas', ''))
+
+    def _tienda(self):
+        try:
+            return Tienda.objects.get(usuario=self.request.user)
+        except Tienda.DoesNotExist:
+            raise ValidationError('El usuario autenticado no tiene una tienda asociada.')
+
+    def get(self, request, clave=None):
+        if clave is not None:
+            return Response({'detail': 'Usa POST para cancelar la operación.'}, status=405)
+        self._tienda()
+        return Response({'version': 1, 'idempotencia_disponible': self._disponible()})
+
+    def post(self, request, clave=None):
+        tienda = self._tienda()
+        if not self._disponible():
+            return Response({'detail': 'La protección de ventas aún no está disponible. Inténtalo más tarde.'}, status=503)
+        if clave is not None:
+            resultado = cancelar_operacion(tienda.pk, clave)
+            return Response({'clave_operacion': str(clave), 'cancelada': resultado is None,
+                             'resultado': resultado})
+        serializer = self.get_serializer(data=request.data)
+        if not serializer.is_valid():
+            mensajes = {
+                'clave_operacion': 'La clave de la operación no es válida.',
+                'items': 'Indica al menos un producto y cantidades enteras mayores que cero.',
+                'almacen_id': 'El almacén de la operación no es válido.',
+                'notas': 'Las notas de la operación no son válidas.',
+                'sesion_caja_id': 'Selecciona una sesión de caja válida.',
+                'medio_pago': 'Selecciona un medio de pago válido.',
+            }
+            campo = next(iter(serializer.errors))
+            return Response({'detail': mensajes.get(campo, 'Revisa los datos de la operación.')}, status=400)
+        data = serializer.validated_data
+
+        def crear_venta():
+            order, movimientos = self._registrar(tienda, request.user, data)
+            # Guarda JSON serializado, no referencias a precios/productos mutables.
+            return json.loads(JSONRenderer().render({
+                'order': StoreOrderSerializer(order, context={'request': request}).data,
+                'movimientos': MovimientoStockSerializer(movimientos, many=True).data,
+            }))
+
+        try:
+            resultado, repetida = confirmar_operacion(
+                tienda.pk, data['clave_operacion'],
+                huella_venta(data['items'], data.get('almacen_id'), data.get('notas', ''), self._contexto(data)),
+                crear_venta,
+            )
+        except ConflictoOperacion as exc:
+            return Response({'detail': str(exc)}, status=409)
+        except DjangoValidationError as exc:
+            return Response({'detail': exc.messages[0] if exc.messages else 'No se pudo registrar la venta.'}, status=400)
+        return Response({**resultado, 'clave_operacion': str(data['clave_operacion']),
+                         'repetida': repetida}, status=200 if repetida else 201)
+
+
+class VentaCajaView(OperacionVentaPresencialView):
+    serializer_class = VentaCajaSerializer
+
+    def _disponible(self):
+        return idempotencia_disponible() and caja_disponible()
+
+    def _contexto(self, data):
+        return {'sesion_id': data['sesion_caja_id'], 'medio_pago': data['medio_pago']}
+
+    def _registrar(self, tienda, usuario, data):
+        return registrar_venta_en_caja(tienda, usuario, data)
+
+
+class CajaView(OperacionVentaPresencialView):
+    serializer_class = OperacionCajaSerializer
+
+    def get(self, request, pk=None, **kwargs):
+        tienda = self._tienda()
+        if not caja_disponible():
+            return Response({'detail': 'Las sesiones de caja aún no están disponibles.'}, status=503)
+        filtros = {}
+        for nombre in ('antes_de', 'almacen_id'):
+            if nombre in request.query_params:
+                valor = request.query_params[nombre]
+                if not valor.isascii() or not valor.isdecimal() or len(valor) > 19 or not 0 < int(valor) <= 9223372036854775807:
+                    return Response({'detail': 'El filtro de caja no es válido.'}, status=400)
+                filtros[nombre] = int(valor)
+        sesiones = SesionCaja.objects.filter(tienda_id=tienda.pk)
+        if pk is not None:
+            if not 0 < pk <= 9223372036854775807:
+                return Response({'detail': 'La sesión de caja no está disponible.'}, status=404)
+            sesion = sesiones.filter(pk=pk).first()
+            if sesion is None:
+                return Response({'detail': 'La sesión de caja no está disponible.'}, status=404)
+            movimientos = sesion.movimientos.all()
+            if 'antes_de' in filtros:
+                movimientos = movimientos.filter(id__lt=filtros['antes_de'])
+            filas = list(movimientos.order_by('-id')[:51])
+            return Response({'sesion': resumen_caja(sesion),
+                             'movimientos': MovimientoCajaSerializer(filas[:50], many=True).data,
+                             'siguiente_antes_de': filas[49].pk if len(filas) > 50 else None})
+        if 'almacen_id' in filtros:
+            sesiones = sesiones.filter(almacen_id=filtros['almacen_id'])
+        if 'antes_de' in filtros:
+            sesiones = sesiones.filter(id__lt=filtros['antes_de'])
+        if 'abierta' in request.query_params:
+            if request.query_params['abierta'] not in ('0', '1'):
+                return Response({'detail': 'El estado de caja no es válido.'}, status=400)
+            sesiones = sesiones.filter(abierta=request.query_params['abierta'] == '1')
+        filas = list(sesiones.order_by('-id')[:21])
+        return Response({'results': [resumen_caja(sesion) for sesion in filas[:20]],
+                         'siguiente_antes_de': filas[19].pk if len(filas) > 20 else None})
+
+    def post(self, request, clave=None, **kwargs):
+        tienda = self._tienda()
+        if not caja_disponible():
+            return Response({'detail': 'Las sesiones de caja aún no están disponibles.'}, status=503)
+        if clave is not None:
+            resultado = cancelar_operacion(tienda.pk, clave, modelo=OperacionCaja)
+            return Response({'clave_operacion': str(clave), 'cancelada': resultado is None, 'resultado': resultado})
+        serializer = self.get_serializer(data=request.data)
+        if not serializer.is_valid():
+            return Response({'detail': 'Revisa los datos: montos no negativos con máximo dos decimales, moneda y motivo. Completa los campos de la operación.'}, status=400)
+        datos = serializer.validated_data
+        huella = hashlib.sha256(json.dumps({k: v for k, v in datos.items() if k != 'clave_operacion'},
+                                           sort_keys=True, default=str).encode()).hexdigest()
+        try:
+            resultado, repetida = confirmar_operacion(tienda.pk, datos['clave_operacion'], huella,
+                lambda: ejecutar_operacion_caja(tienda, request.user, datos), modelo=OperacionCaja)
+        except (ConflictoOperacion, DjangoValidationError) as exc:
+            mensaje = exc.messages[0] if isinstance(exc, DjangoValidationError) else str(exc)
+            return Response({'detail': mensaje}, status=409 if isinstance(exc, ConflictoOperacion) else 400)
+        except IntegrityError:
+            return Response({'detail': 'Ya existe una sesión abierta para ese almacén. Actualiza las cajas.'}, status=409)
+        return Response({**resultado, 'clave_operacion': str(datos['clave_operacion']), 'repetida': repetida}, status=200 if repetida else 201)
+
+
+class CuentaPorCobrarView(OperacionVentaPresencialView):
+    serializer_class = OperacionCuentaPorCobrarSerializer
+
+    def get(self, request, pk=None, **kwargs):
+        tienda = self._tienda()
+        if not cuentas_por_cobrar_disponible():
+            return Response({'detail': 'Las cuentas por cobrar aún no están disponibles.'}, status=503)
+        filtros = {}
+        if 'antes_de' in request.query_params:
+            valor = request.query_params['antes_de']
+            if not valor.isascii() or not valor.isdecimal() or len(valor) > 19 or not 0 < int(valor) <= 9223372036854775807:
+                return Response({'detail': 'El filtro no es válido.'}, status=400)
+            filtros['antes_de'] = int(valor)
+        cuentas = CuentaPorCobrar.objects.filter(tienda_id=tienda.pk)
+        if pk is not None:
+            if not 0 < pk <= 9223372036854775807:
+                return Response({'detail': 'La cuenta por cobrar no está disponible.'}, status=404)
+            cuenta = cuentas.filter(pk=pk).first()
+            if cuenta is None:
+                return Response({'detail': 'La cuenta por cobrar no está disponible.'}, status=404)
+            abonos = cuenta.abonos.order_by('-id')[:50]
+            return Response({'cuenta': resumen_cuenta(cuenta), 'abonos': [resumen_abono(a) for a in abonos]})
+        if 'estado' in request.query_params:
+            if request.query_params['estado'] not in dict(CuentaPorCobrar.ESTADOS):
+                return Response({'detail': 'El estado no es válido.'}, status=400)
+            cuentas = cuentas.filter(estado=request.query_params['estado'])
+        if 'antes_de' in filtros:
+            cuentas = cuentas.filter(id__lt=filtros['antes_de'])
+        filas = list(cuentas.order_by('-id')[:21])
+        return Response({'results': [resumen_cuenta(c) for c in filas[:20]],
+                         'siguiente_antes_de': filas[19].pk if len(filas) > 20 else None})
+
+    def post(self, request, clave=None, **kwargs):
+        tienda = self._tienda()
+        if not cuentas_por_cobrar_disponible():
+            return Response({'detail': 'Las cuentas por cobrar aún no están disponibles.'}, status=503)
+        if clave is not None:
+            resultado = cancelar_operacion(tienda.pk, clave, modelo=OperacionCuentaPorCobrar)
+            return Response({'clave_operacion': str(clave), 'cancelada': resultado is None, 'resultado': resultado})
+        serializer = self.get_serializer(data=request.data)
+        if not serializer.is_valid():
+            return Response({'detail': 'Revisa los datos de la cuenta por cobrar.'}, status=400)
+        datos = serializer.validated_data
+        huella = hashlib.sha256(json.dumps({k: v for k, v in datos.items() if k != 'clave_operacion'},
+                                           sort_keys=True, default=str).encode()).hexdigest()
+
+        def ejecutar():
+            accion = datos['accion']
+            if accion == 'crear':
+                return crear_cuenta_por_cobrar(tienda, request.user, datos)
+            if accion == 'abonar':
+                return registrar_abono(tienda, request.user, datos)
+            return anular_cuenta(tienda, request.user, datos['cuenta_id'], datos.get('motivo', ''))
+
+        try:
+            resultado, repetida = confirmar_operacion(tienda.pk, datos['clave_operacion'], huella, ejecutar,
+                                                       modelo=OperacionCuentaPorCobrar)
+        except (ConflictoOperacion, DjangoValidationError) as exc:
+            mensaje = exc.messages[0] if isinstance(exc, DjangoValidationError) else str(exc)
+            return Response({'detail': mensaje}, status=409 if isinstance(exc, ConflictoOperacion) else 400)
+        return Response({**resultado, 'clave_operacion': str(datos['clave_operacion']), 'repetida': repetida}, status=200 if repetida else 201)
+
+
+class CuentaPorPagarView(OperacionVentaPresencialView):
+    serializer_class = OperacionCuentaPorPagarSerializer
+
+    def get(self, request, pk=None, **kwargs):
+        tienda = self._tienda()
+        if not pagos_service.cuentas_por_pagar_disponible():
+            return Response({'detail': 'Las cuentas por pagar aún no están disponibles.'}, status=503)
+        filtros = {}
+        if 'antes_de' in request.query_params:
+            valor = request.query_params['antes_de']
+            if not valor.isascii() or not valor.isdecimal() or len(valor) > 19 or not 0 < int(valor) <= 9223372036854775807:
+                return Response({'detail': 'El filtro no es válido.'}, status=400)
+            filtros['antes_de'] = int(valor)
+        cuentas = CuentaPorPagar.objects.filter(tienda_id=tienda.pk)
+        if pk is not None:
+            if not 0 < pk <= 9223372036854775807:
+                return Response({'detail': 'La cuenta por pagar no está disponible.'}, status=404)
+            cuenta = cuentas.filter(pk=pk).first()
+            if cuenta is None:
+                return Response({'detail': 'La cuenta por pagar no está disponible.'}, status=404)
+            abonos = cuenta.abonos.order_by('-id')[:50]
+            return Response({'cuenta': pagos_service.resumen_cuenta(cuenta),
+                             'abonos': [pagos_service.resumen_abono(a) for a in abonos]})
+        if 'estado' in request.query_params:
+            if request.query_params['estado'] not in dict(CuentaPorPagar.ESTADOS):
+                return Response({'detail': 'El estado no es válido.'}, status=400)
+            cuentas = cuentas.filter(estado=request.query_params['estado'])
+        if 'antes_de' in filtros:
+            cuentas = cuentas.filter(id__lt=filtros['antes_de'])
+        filas = list(cuentas.order_by('-id')[:21])
+        return Response({'results': [pagos_service.resumen_cuenta(c) for c in filas[:20]],
+                         'siguiente_antes_de': filas[19].pk if len(filas) > 20 else None})
+
+    def post(self, request, clave=None, **kwargs):
+        tienda = self._tienda()
+        if not pagos_service.cuentas_por_pagar_disponible():
+            return Response({'detail': 'Las cuentas por pagar aún no están disponibles.'}, status=503)
+        if clave is not None:
+            resultado = cancelar_operacion(tienda.pk, clave, modelo=OperacionCuentaPorPagar)
+            return Response({'clave_operacion': str(clave), 'cancelada': resultado is None, 'resultado': resultado})
+        serializer = self.get_serializer(data=request.data)
+        if not serializer.is_valid():
+            return Response({'detail': 'Revisa los datos de la cuenta por pagar.'}, status=400)
+        datos = serializer.validated_data
+        huella = hashlib.sha256(json.dumps({k: v for k, v in datos.items() if k != 'clave_operacion'},
+                                           sort_keys=True, default=str).encode()).hexdigest()
+
+        def ejecutar():
+            accion = datos['accion']
+            if accion == 'crear':
+                return pagos_service.crear_cuenta_por_pagar(tienda, request.user, datos)
+            if accion == 'abonar':
+                return pagos_service.registrar_abono(tienda, request.user, datos)
+            return pagos_service.anular_cuenta(tienda, request.user, datos['cuenta_id'], datos.get('motivo', ''))
+
+        try:
+            resultado, repetida = confirmar_operacion(tienda.pk, datos['clave_operacion'], huella, ejecutar,
+                                                       modelo=OperacionCuentaPorPagar)
+        except (ConflictoOperacion, DjangoValidationError) as exc:
+            mensaje = exc.messages[0] if isinstance(exc, DjangoValidationError) else str(exc)
+            return Response({'detail': mensaje}, status=409 if isinstance(exc, ConflictoOperacion) else 400)
+        return Response({**resultado, 'clave_operacion': str(datos['clave_operacion']), 'repetida': repetida}, status=200 if repetida else 201)
+
+
+class GastoView(OperacionVentaPresencialView):
+    serializer_class = OperacionGastoSerializer
+
+    def get(self, request, pk=None, **kwargs):
+        tienda = self._tienda()
+        if not gastos_service.gastos_disponible():
+            return Response({'detail': 'Los gastos aún no están disponibles.'}, status=503)
+        gastos = Gasto.objects.filter(tienda_id=tienda.pk)
+        if pk is not None:
+            if not 0 < pk <= 9223372036854775807:
+                return Response({'detail': 'El gasto no está disponible.'}, status=404)
+            gasto = gastos.filter(pk=pk).first()
+            if gasto is None:
+                return Response({'detail': 'El gasto no está disponible.'}, status=404)
+            return Response({'gasto': gastos_service.resumen_gasto(gasto)})
+        if 'sucursal_id' in request.query_params:
+            valor = request.query_params['sucursal_id']
+            if not valor.isascii() or not valor.isdecimal() or len(valor) > 19 or not 0 < int(valor) <= 9223372036854775807:
+                return Response({'detail': 'El filtro de sucursal no es válido.'}, status=400)
+            gastos = gastos.filter(sucursal_id=int(valor))
+        if 'tipo' in request.query_params:
+            if request.query_params['tipo'] not in dict(Gasto.TIPOS):
+                return Response({'detail': 'El tipo de gasto no es válido.'}, status=400)
+            gastos = gastos.filter(tipo=request.query_params['tipo'])
+        if 'anulado' in request.query_params:
+            if request.query_params['anulado'] not in ('0', '1'):
+                return Response({'detail': 'El filtro de anulado no es válido.'}, status=400)
+            gastos = gastos.filter(anulado=request.query_params['anulado'] == '1')
+        if 'antes_de' in request.query_params:
+            valor = request.query_params['antes_de']
+            if not valor.isascii() or not valor.isdecimal() or len(valor) > 19 or not 0 < int(valor) <= 9223372036854775807:
+                return Response({'detail': 'El filtro no es válido.'}, status=400)
+            gastos = gastos.filter(id__lt=int(valor))
+        filas = list(gastos.order_by('-id')[:21])
+        return Response({'results': [gastos_service.resumen_gasto(g) for g in filas[:20]],
+                         'siguiente_antes_de': filas[19].pk if len(filas) > 20 else None})
+
+    def post(self, request, clave=None, **kwargs):
+        tienda = self._tienda()
+        if not gastos_service.gastos_disponible():
+            return Response({'detail': 'Los gastos aún no están disponibles.'}, status=503)
+        if clave is not None:
+            resultado = cancelar_operacion(tienda.pk, clave, modelo=OperacionGasto)
+            return Response({'clave_operacion': str(clave), 'cancelada': resultado is None, 'resultado': resultado})
+        serializer = self.get_serializer(data=request.data)
+        if not serializer.is_valid():
+            return Response({'detail': 'Revisa los datos del gasto.'}, status=400)
+        datos = serializer.validated_data
+        huella = hashlib.sha256(json.dumps({k: v for k, v in datos.items() if k != 'clave_operacion'},
+                                           sort_keys=True, default=str).encode()).hexdigest()
+
+        def ejecutar():
+            accion = datos['accion']
+            if accion == 'crear':
+                return gastos_service.crear_gasto(tienda, request.user, datos)
+            return gastos_service.anular_gasto(tienda, request.user, datos['gasto_id'], datos.get('motivo', ''))
+
+        try:
+            resultado, repetida = confirmar_operacion(tienda.pk, datos['clave_operacion'], huella, ejecutar,
+                                                       modelo=OperacionGasto)
+        except (ConflictoOperacion, DjangoValidationError) as exc:
+            mensaje = exc.messages[0] if isinstance(exc, DjangoValidationError) else str(exc)
+            return Response({'detail': mensaje}, status=409 if isinstance(exc, ConflictoOperacion) else 400)
+        return Response({**resultado, 'clave_operacion': str(datos['clave_operacion']), 'repetida': repetida}, status=200 if repetida else 201)
+
 
 class StoreOrderViewSet(viewsets.ModelViewSet):
     serializer_class = StoreOrderSerializer
     permission_classes = [IsAuthenticated]
+    http_method_names = ['get', 'post', 'patch', 'head', 'options']
+    queryset = StoreOrder.objects.select_related('producto', 'producto__tienda', 'usuario')
+
+    def update(self, request, *args, **kwargs):
+        return Response(
+            {'error': 'Las órdenes no se pueden reemplazar. Usa las acciones disponibles.'},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
+
+    def partial_update(self, request, *args, **kwargs):
+        # PATCH se reserva para la acción /pago/; no se permite alterar
+        # producto, cantidad o propietario desde el endpoint base.
+        return Response(
+            {'error': 'Las órdenes no se pueden editar directamente.'},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
 
     def get_queryset(self):
         user = self.request.user
         scope = self.request.query_params.get('scope')
 
-        base_queryset = StoreOrder.objects.select_related(
-            'producto', 'producto__tienda', 'usuario'
-        )
+        base_queryset = self.queryset
 
         if scope == 'store' and getattr(user, 'rol', None) == Usuario.ES_TIENDA:
             return base_queryset.filter(producto__tienda__usuario=user)
@@ -286,37 +1156,254 @@ class StoreOrderViewSet(viewsets.ModelViewSet):
 
         precio_unitario = producto.precio
         total = precio_unitario * cantidad
+        tasa = TasaCambio.vigente()
 
         serializer.save(
             usuario=user,
             precio_unitario=precio_unitario,
             total=total,
-            estado=StoreOrder.ESTADO_EN_CURSO,
+            moneda=producto.moneda,
+            tasa_aplicada=tasa.valor_bs if tasa else None,
+            estado=StoreOrder.ESTADO_PENDIENTE,
         )
 
+    @action(
+        detail=True,
+        methods=['post', 'patch'],
+        url_path='pago',
+        parser_classes=[MultiPartParser, FormParser, JSONParser],
+    )
+    def pago(self, request, pk=None):
+        try:
+            order = StoreOrder.objects.select_related(
+                'producto', 'producto__tienda', 'usuario'
+            ).get(pk=pk)
+        except StoreOrder.DoesNotExist:
+            return Response({'error': 'Orden no encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if request.method == 'POST':
+            return self._reportar_pago(request, order)
+        return self._resolver_pago(request, order)
+
+    def _reportar_pago(self, request, order: StoreOrder):
+        user = request.user
+        if order.usuario_id != user.id:
+            return Response({'error': 'Solo el comprador puede reportar el pago.'}, status=status.HTTP_403_FORBIDDEN)
+        if order.estado != StoreOrder.ESTADO_PENDIENTE:
+            return Response(
+                {'error': 'Solo puedes reportar el pago de órdenes pendientes.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if order.pagos.filter(estado=OrderPayment.ESTADO_REPORTADO).exists():
+            return Response(
+                {'error': 'Ya reportaste un pago para esta orden. Espera a que la tienda lo revise.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if order.pagos.filter(estado=OrderPayment.ESTADO_CONFIRMADO).exists():
+            return Response({'error': 'Esta orden ya tiene un pago confirmado.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        metodo = request.data.get('metodo')
+        metodos_validos = {m for m, _ in OrderPayment.METODOS}
+        if metodo not in metodos_validos:
+            return Response(
+                {'error': f"Método de pago inválido. Usa uno de: {', '.join(sorted(metodos_validos))}."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        referencia = (request.data.get('referencia') or '').strip() or None
+        if metodo != OrderPayment.METODO_EFECTIVO and not referencia:
+            return Response(
+                {'error': 'Indica el número de referencia del pago.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        captura = request.FILES.get('captura')
+        if captura:
+            try:
+                validate_image_upload(captura)
+            except DjangoValidationError as exc:
+                return Response(
+                    {'captura': exc.messages or ['La imagen no es válida.']},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        pago = OrderPayment.objects.create(
+            order=order,
+            metodo=metodo,
+            referencia=referencia,
+            captura=captura,
+        )
+
+        tienda_user_id = order.producto.tienda.usuario_id
+        if tienda_user_id != user.id:
+            Notificacion.objects.create(
+                usuario_id=tienda_user_id,
+                titulo='Pago reportado',
+                mensaje=f'El comprador reportó el pago de la orden #{order.id}. Revísalo y confírmalo.',
+                tipo=Notificacion.TIPO_ORDEN,
+                data={'order_id': order.id, 'view': 'store'},
+            )
+
+        return Response(
+            OrderPaymentSerializer(pago, context={'request': request}).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    def _resolver_pago(self, request, order: StoreOrder):
+        user = request.user
+        if getattr(user, 'rol', None) != Usuario.ES_TIENDA or order.producto.tienda.usuario_id != user.id:
+            return Response(
+                {'error': 'Solo la tienda dueña de la orden puede confirmar o rechazar el pago.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        accion = request.data.get('accion')
+        if accion not in ('confirm', 'reject'):
+            return Response({'error': "Acción inválida. Usa 'confirm' o 'reject'."}, status=status.HTTP_400_BAD_REQUEST)
+
+        pago = order.pagos.filter(estado=OrderPayment.ESTADO_REPORTADO).first()
+        if not pago:
+            return Response({'error': 'No hay ningún pago reportado pendiente por revisar.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if accion == 'confirm':
+            pago.estado = OrderPayment.ESTADO_CONFIRMADO
+            pago.save(update_fields=['estado', 'actualizado'])
+            if order.estado == StoreOrder.ESTADO_PENDIENTE:
+                order.estado = StoreOrder.ESTADO_EN_CURSO
+                order.save(update_fields=['estado', 'actualizado'])
+        else:
+            motivo = (request.data.get('motivo') or '').strip() or None
+            pago.estado = OrderPayment.ESTADO_RECHAZADO
+            pago.motivo_rechazo = motivo
+            pago.save(update_fields=['estado', 'motivo_rechazo', 'actualizado'])
+            Notificacion.objects.create(
+                usuario_id=order.usuario_id,
+                titulo='Pago rechazado',
+                mensaje=(
+                    f'La tienda rechazó el pago de tu orden #{order.id}'
+                    + (f': {motivo}' if motivo else '. Verifica los datos y repórtalo de nuevo.')
+                ),
+                tipo=Notificacion.TIPO_ORDEN,
+                data={'order_id': order.id, 'view': 'buyer'},
+            )
+
+        return Response(OrderPaymentSerializer(pago, context={'request': request}).data)
+
+
+class MiTiendaView(generics.GenericAPIView):
+    permission_classes = [IsAuthenticated, EsTienda]
+    serializer_class = TiendaSerializer
+
+    def get(self, request):
+        try:
+            tienda = Tienda.objects.get(usuario=request.user)
+        except Tienda.DoesNotExist:
+            return Response({'error': 'El usuario no tiene una tienda asociada.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response(self.get_serializer(tienda).data)
+
+    def patch(self, request):
+        try:
+            tienda = Tienda.objects.get(usuario=request.user)
+        except Tienda.DoesNotExist:
+            return Response({'error': 'El usuario no tiene una tienda asociada.'}, status=status.HTTP_404_NOT_FOUND)
+        serializer = self.get_serializer(tienda, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(usuario=request.user)
+        return Response(serializer.data)
+
+
+class MiNegocioView(generics.GenericAPIView):
+    """Devuelve el contexto administrativo del negocio del usuario autenticado."""
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = NegocioSerializer
+
+    def get(self, request):
+        negocio = (
+            Negocio.objects.select_related('tienda')
+            .prefetch_related('miembros__usuario', 'sucursales__almacenes')
+            .filter(
+                Q(tienda__usuario=request.user)
+                | Q(miembros__usuario=request.user, miembros__activo=True)
+            )
+            .distinct()
+            .first()
+        )
+        if negocio is None:
+            return Response(
+                {'error': 'El usuario no pertenece a un negocio.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        return Response(self.get_serializer(negocio).data)
+
+
 class ComentarioViewSet(viewsets.ModelViewSet):
-    #permission_classes = [IsAuthenticated]
     queryset = Comentario.objects.all()
     serializer_class = ComentarioSerializer
 
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [AllowAny()]
+        return [IsAuthenticated()]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if self.action in ('update', 'partial_update', 'destroy'):
+            queryset = queryset.filter(usuario=self.request.user)
+        return queryset
+
+    def perform_create(self, serializer):
+        serializer.save(usuario=self.request.user)
+
 class ComentarioProductoViewSet(viewsets.ModelViewSet):
-    #permission_classes = [IsAuthenticated]
     queryset = ComentarioProducto.objects.all()
     serializer_class = ComentarioProductoSerializer
 
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [AllowAny()]
+        return [IsAuthenticated()]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if self.action in ('update', 'partial_update', 'destroy'):
+            queryset = queryset.filter(usuario=self.request.user)
+        return queryset
+
+    def perform_create(self, serializer):
+        serializer.save(usuario=self.request.user)
+
 class ReferenciaViewSet(viewsets.ModelViewSet):
-    #permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated]
     queryset = Referencia.objects.all()
     serializer_class = ReferenciaSerializer
 
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if not self.request.user.is_staff:
+            queryset = queryset.filter(usuario=self.request.user)
+        return queryset
+
+    def perform_create(self, serializer):
+        serializer.save(usuario=self.request.user)
+
 class WalletViewSet(viewsets.ModelViewSet):
-    #permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated]
+    http_method_names = ['get', 'head', 'options']
     queryset = Wallet.objects.all()
     serializer_class = WalletSerializer
 
+    def get_queryset(self):
+        if self.request.user.is_staff:
+            return super().get_queryset()
+        return super().get_queryset().filter(usuario=self.request.user)
+
 class WalletActionView(generics.GenericAPIView):
     serializer_class = WalletSerializer
-    # permission_classes = [IsAuthenticated]
+    # No se puede acuñar saldo desde un endpoint accesible a cualquier
+    # usuario autenticado. Las cargas reales deben pasar por un proveedor de
+    # pagos o una acción administrativa auditada.
+    permission_classes = [IsAdminUser]
 
     @extend_schema(
         request=WalletActionRequestSerializer,
@@ -377,3 +1464,472 @@ class UsuarioDetalleView(generics.GenericAPIView):
             usuario_data['tienda'] = tienda_serializer.data
 
         return Response(usuario_data, status=status.HTTP_200_OK)
+
+
+class UsuarioProfileUpdateView(generics.GenericAPIView):
+    serializer_class = UsuarioSerializer
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(request=UsuarioSerializer, responses=UsuarioSerializer)
+    def patch(self, request):
+        user = request.user
+        if not user or not user.is_authenticated:
+            return Response({'error': 'Autenticación requerida'}, status=status.HTTP_401_UNAUTHORIZED)
+        serializer = self.get_serializer(user, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+
+class ProductoFavoritoView(generics.GenericAPIView):
+    serializer_class = ProductoFavoritoSerializer
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses=ProductoFavoritoSerializer(many=True))
+    def get(self, request):
+        favoritos = ProductoFavorito.objects.filter(usuario=request.user).select_related('producto')
+        serializer = ProductoFavoritoSerializer(favoritos, many=True)
+        return Response(serializer.data)
+
+    @extend_schema(request=ProductoFavoritoSerializer, responses=ProductoFavoritoSerializer)
+    def post(self, request):
+        producto_id = request.data.get('producto')
+        if not producto_id:
+            return Response({'error': 'producto es requerido'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            producto = ProductoTienda.objects.get(pk=producto_id)
+        except ProductoTienda.DoesNotExist:
+            return Response({'error': 'Producto no encontrado'}, status=status.HTTP_404_NOT_FOUND)
+
+        favorito, _ = ProductoFavorito.objects.get_or_create(
+            usuario=request.user,
+            producto=producto,
+        )
+        Notificacion.objects.create(
+            usuario=request.user,
+            titulo='Producto agregado a favoritos',
+            mensaje=f'{producto.nombre} ahora está en tu lista de favoritos.',
+            tipo=Notificacion.TIPO_FAVORITO,
+            leido=False,
+        )
+        serializer = ProductoFavoritoSerializer(favorito)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    @extend_schema(request=ProductoFavoritoSerializer, responses=ProductoFavoritoSerializer)
+    def delete(self, request):
+        producto_id = request.data.get('producto')
+        if not producto_id:
+            return Response({'error': 'producto es requerido'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            favorito = ProductoFavorito.objects.get(usuario=request.user, producto_id=producto_id)
+        except ProductoFavorito.DoesNotExist:
+            return Response({'error': 'Favorito no encontrado'}, status=status.HTTP_404_NOT_FOUND)
+        favorito.delete()
+        try:
+            producto = ProductoTienda.objects.get(pk=producto_id)
+            Notificacion.objects.create(
+                usuario=request.user,
+                titulo='Producto removido de favoritos',
+                mensaje=f'{producto.nombre} se quitó de tu lista de favoritos.',
+                tipo=Notificacion.TIPO_FAVORITO,
+                leido=False,
+            )
+        except ProductoTienda.DoesNotExist:
+            pass
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class NotificacionListView(generics.GenericAPIView):
+    serializer_class = NotificacionSerializer
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses=NotificacionSerializer(many=True))
+    def get(self, request):
+        qs = Notificacion.objects.filter(usuario=request.user).order_by('-creado')
+        serializer = self.get_serializer(qs, many=True)
+        return Response(serializer.data)
+
+
+class NotificacionUnreadCountView(generics.GenericAPIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses={'application/json': {'type': 'object'}})
+    def get(self, request):
+        count = Notificacion.objects.filter(usuario=request.user, leido=False).count()
+        return Response({'unread': count})
+
+
+class NotificacionMarkReadView(generics.GenericAPIView):
+    serializer_class = NotificacionSerializer
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses=NotificacionSerializer)
+    def post(self, request, pk: int):
+        try:
+            notificacion = Notificacion.objects.get(pk=pk, usuario=request.user)
+        except Notificacion.DoesNotExist:
+            return Response({'error': 'Notificación no encontrada'}, status=status.HTTP_404_NOT_FOUND)
+
+        if not notificacion.leido:
+            notificacion.leido = True
+            notificacion.save(update_fields=['leido'])
+
+        serializer = self.get_serializer(notificacion)
+        return Response(serializer.data)
+
+
+class ConversationViewSet(viewsets.ModelViewSet):
+    serializer_class = ConversationSerializer
+    permission_classes = [IsAuthenticated]
+    http_method_names = ['get', 'post', 'delete', 'head', 'options']
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+    queryset = Conversation.objects.all()
+
+    def get_queryset(self):
+        return (
+            Conversation.objects.filter(participantes=self.request.user)
+            .prefetch_related('participantes', 'mensajes')
+            .order_by('-actualizado')
+        )
+
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return ConversationCreateSerializer
+        return ConversationSerializer
+
+    def create(self, request, *args, **kwargs):
+        payload = ConversationCreateSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        destinatario_id = payload.validated_data.get('destinatario_id')
+        producto_id = payload.validated_data.get('producto_id')
+
+        producto = None
+        if producto_id is not None:
+            try:
+                producto = ProductoTienda.objects.select_related('tienda', 'tienda__usuario').get(pk=producto_id)
+            except ProductoTienda.DoesNotExist:
+                return Response({'error': 'Producto no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+            if destinatario_id is None:
+                destinatario_id = producto.tienda.usuario_id
+
+        if destinatario_id == request.user.id:
+            return Response({'error': 'No puedes chatear contigo mismo.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            destinatario = Usuario.objects.get(pk=destinatario_id)
+        except Usuario.DoesNotExist:
+            return Response({'error': 'Destinatario no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+
+        conversacion, _ = Conversation.get_or_create_between(request.user, destinatario, producto=producto)
+        serializer = ConversationSerializer(conversacion, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['get', 'post'], url_path='messages')
+    def messages(self, request, pk: int | None = None):
+        conversation = self.get_object()
+        if request.method == 'GET':
+            qs = conversation.mensajes.select_related('autor').order_by('creado')
+            serializer = MessageSerializer(qs, many=True, context={'request': request})
+            return Response(serializer.data)
+
+        contenido = (request.data.get('contenido') or '').strip()
+        adjunto = request.FILES.get('adjunto')
+        if not contenido and not adjunto:
+            return Response(
+                {'error': 'El mensaje debe incluir texto o un archivo adjunto.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if adjunto:
+            try:
+                validate_chat_attachment(adjunto)
+            except DjangoValidationError as exc:
+                return Response(
+                    {'error': ' '.join(exc.messages) or 'El archivo adjunto no es válido.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        mensaje = Message.objects.create(
+            conversation=conversation,
+            autor=request.user,
+            contenido=contenido,
+            adjunto=adjunto,
+            adjunto_nombre=(str(getattr(adjunto, 'name', '') or '')[:255] if adjunto else ''),
+            adjunto_tipo=(str(getattr(adjunto, 'content_type', '') or '')[:100] if adjunto else ''),
+        )
+        conversation.save(update_fields=['actualizado'])
+
+        data = MessageSerializer(mensaje, context={'request': request}).data
+        broadcast_chat_message(conversation.id, data)
+
+        # Notificar al otro participante (in-app + push)
+        otros = conversation.participantes.exclude(id=request.user.id)
+        autor_nombre = request.user.first_name or request.user.email
+        resumen = contenido[:140] if contenido else f"📎 Adjunto: {mensaje.adjunto_nombre}"
+        for destinatario in otros:
+            Notificacion.objects.create(
+                usuario=destinatario,
+                titulo=f'Nuevo mensaje de {autor_nombre}',
+                mensaje=resumen,
+                tipo=Notificacion.TIPO_MENSAJE,
+                data={'conversation_id': conversation.id},
+                leido=False,
+            )
+            send_push_to_user(
+                destinatario.id,
+                title=f'Nuevo mensaje de {autor_nombre}',
+                body=resumen,
+                data={'type': 'chat', 'conversation_id': conversation.id},
+            )
+
+        return Response(data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'], url_path='read')
+    def mark_read(self, request, pk: int | None = None):
+        conversation = self.get_object()
+        updated = conversation.mensajes.filter(leido=False).exclude(autor=request.user).update(leido=True)
+        # La notificación y el mensaje representan el mismo evento. Al abrir
+        # la conversación ambos deben dejar de contar como no leídos.
+        Notificacion.objects.filter(
+            usuario=request.user,
+            tipo=Notificacion.TIPO_MENSAJE,
+            data__conversation_id=conversation.id,
+            leido=False,
+        ).update(leido=True)
+        if updated:
+            broadcast_chat_read(conversation.id, request.user.id)
+        return Response({'updated': updated})
+
+
+class TasaCambioView(generics.GenericAPIView):
+    """Endpoint público para leer la tasa vigente; sólo staff puede registrar nuevas."""
+
+    serializer_class = TasaCambioSerializer
+
+    def get_permissions(self):
+        if self.request.method == 'POST':
+            return [IsAuthenticated()]
+        return [permissions.AllowAny()]
+
+    @extend_schema(responses=TasaCambioSerializer)
+    def get(self, request):
+        tasa = TasaCambio.vigente()
+        if not tasa:
+            return Response({'detail': 'Aún no hay tasa registrada.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response(self.get_serializer(tasa).data)
+
+    @extend_schema(request=TasaCambioSerializer, responses=TasaCambioSerializer)
+    def post(self, request):
+        if not request.user.is_staff:
+            return Response(
+                {'error': 'Sólo personal autorizado puede registrar tasas.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(registrado_por=request.user)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class TasaCambioHistoryView(generics.ListAPIView):
+    """Historial reciente de tasas (últimas 30)."""
+
+    serializer_class = TasaCambioSerializer
+    permission_classes = [permissions.AllowAny]
+
+    def get_queryset(self):
+        return TasaCambio.objects.all()[:30]
+
+
+class StoreDashboardView(generics.GenericAPIView):
+    """Métricas agregadas para el dueño de la tienda autenticado."""
+
+    serializer_class = StoreDashboardSerializer
+    permission_classes = [IsAuthenticated, EsTienda]
+
+    @extend_schema(responses=StoreDashboardSerializer)
+    def get(self, request):
+        from datetime import timedelta
+        from decimal import Decimal
+        from django.db.models import Count, Sum
+        from django.db.models.functions import TruncDate
+        from django.utils import timezone
+
+        try:
+            rango_dias = int(request.query_params.get('dias', 30))
+        except (TypeError, ValueError):
+            rango_dias = 30
+        rango_dias = max(1, min(rango_dias, 365))
+
+        desde = timezone.now() - timedelta(days=rango_dias)
+        ordenes_tienda = StoreOrder.objects.filter(
+            producto__tienda__usuario=request.user,
+            creado__gte=desde,
+        )
+
+        # Ingresos (sólo órdenes completadas), por moneda
+        completadas = ordenes_tienda.filter(estado=StoreOrder.ESTADO_COMPLETADO)
+        ingresos_por_moneda = {
+            row['moneda']: row['total']
+            for row in completadas.values('moneda').annotate(total=Sum('total'))
+        }
+        ingresos_usd = ingresos_por_moneda.get('USD') or Decimal('0')
+        ingresos_ves = ingresos_por_moneda.get('VES') or Decimal('0')
+
+        # Conteo por estado
+        ordenes_por_estado = {
+            estado: 0 for estado, _ in StoreOrder.ESTADOS
+        }
+        for row in ordenes_tienda.values('estado').annotate(n=Count('id')):
+            ordenes_por_estado[row['estado']] = row['n']
+
+        ordenes_total = sum(ordenes_por_estado.values())
+
+        # Top 5 productos por cantidad vendida (sobre completadas)
+        productos_top_qs = (
+            completadas.values('producto__id', 'producto__nombre', 'moneda')
+            .annotate(cantidad=Sum('cantidad'), ingreso=Sum('total'))
+            .order_by('-cantidad')[:5]
+        )
+        productos_top = [
+            {
+                'producto_id': row['producto__id'],
+                'nombre': row['producto__nombre'],
+                'cantidad': row['cantidad'],
+                'ingreso': str(row['ingreso']),
+                'moneda': row['moneda'],
+            }
+            for row in productos_top_qs
+        ]
+
+        # Serie diaria de órdenes (todas, no sólo completadas) para el rango
+        serie_qs = (
+            ordenes_tienda.annotate(dia=TruncDate('creado'))
+            .values('dia')
+            .annotate(n=Count('id'), ingreso_usd=Sum('total', filter=Q(moneda='USD')),
+                      ingreso_ves=Sum('total', filter=Q(moneda='VES')))
+            .order_by('dia')
+        )
+        serie_diaria = [
+            {
+                'dia': row['dia'].isoformat() if row['dia'] else None,
+                'ordenes': row['n'],
+                'ingreso_usd': str(row['ingreso_usd'] or 0),
+                'ingreso_ves': str(row['ingreso_ves'] or 0),
+            }
+            for row in serie_qs
+        ]
+
+        # Ventas por canal (sólo completadas)
+        ventas_canal_qs = (
+            completadas
+            .values('canal')
+            .annotate(
+                ordenes=Count('id'),
+                ingresos_usd=Sum('total', filter=Q(moneda='USD')),
+                ingresos_ves=Sum('total', filter=Q(moneda='VES')),
+            )
+        )
+        ventas_por_canal = {
+            StoreOrder.CANAL_ONLINE: {'ordenes': 0, 'ingresos_usd': '0', 'ingresos_ves': '0'},
+            StoreOrder.CANAL_PRESENCIAL: {'ordenes': 0, 'ingresos_usd': '0', 'ingresos_ves': '0'},
+        }
+        for row in ventas_canal_qs:
+            ventas_por_canal[row['canal']] = {
+                'ordenes': row['ordenes'],
+                'ingresos_usd': str(row['ingresos_usd'] or Decimal('0')),
+                'ingresos_ves': str(row['ingresos_ves'] or Decimal('0')),
+            }
+
+        tasa = TasaCambio.vigente()
+        tasa_data = TasaCambioSerializer(tasa).data if tasa else None
+
+        return Response({
+            'rango_dias': rango_dias,
+            'ingresos_usd': str(ingresos_usd),
+            'ingresos_ves': str(ingresos_ves),
+            'ordenes_total': ordenes_total,
+            'ordenes_por_estado': ordenes_por_estado,
+            'productos_top': productos_top,
+            'serie_diaria': serie_diaria,
+            'tasa_vigente': tasa_data,
+            'ventas_por_canal': ventas_por_canal,
+        })
+
+
+class ExpoPushTokenView(generics.GenericAPIView):
+    serializer_class = ExpoPushTokenSerializer
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(request=ExpoPushTokenSerializer, responses=ExpoPushTokenSerializer)
+    def post(self, request):
+        token = (request.data.get('token') or '').strip()
+        if not token:
+            return Response({'error': 'token requerido.'}, status=status.HTTP_400_BAD_REQUEST)
+        plataforma = request.data.get('plataforma')
+        obj, _ = ExpoPushToken.objects.update_or_create(
+            token=token,
+            defaults={'usuario': request.user, 'plataforma': plataforma},
+        )
+        return Response(self.get_serializer(obj).data, status=status.HTTP_200_OK)
+
+    def delete(self, request):
+        token = (request.data.get('token') or '').strip()
+        if not token:
+            return Response({'error': 'token requerido.'}, status=status.HTTP_400_BAD_REQUEST)
+        ExpoPushToken.objects.filter(token=token, usuario=request.user).delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class ReporteCreateView(generics.CreateAPIView):
+    serializer_class = ReporteSerializer
+    permission_classes = [IsAuthenticated]
+
+
+class ArticuloUsadoViewSet(viewsets.ModelViewSet):
+    """Publicaciones de artículos de la comunidad.
+
+    Este flujo es independiente de Tienda: cualquier usuario autenticado
+    puede publicar y administrar sus propios artículos. La consulta pública
+    solo expone publicaciones activas.
+    """
+
+    serializer_class = ArticuloUsadoSerializer
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def get_queryset(self):
+        qs = ArticuloUsado.objects.select_related('vendedor')
+        if self.action == 'list':
+            mine = self.request.query_params.get('mine')
+            if mine:
+                if not self.request.user.is_authenticated:
+                    return ArticuloUsado.objects.none()
+                qs = qs.filter(vendedor=self.request.user)
+            else:
+                qs = qs.filter(activo=True)
+        moneda = self.request.query_params.get('moneda')
+        if moneda:
+            qs = qs.filter(moneda=moneda.upper())
+        search = self.request.query_params.get('search')
+        if search:
+            qs = qs.filter(Q(titulo__icontains=search) | Q(descripcion__icontains=search))
+        return qs
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [AllowAny()]
+        return [IsAuthenticated()]
+
+    def get_object(self):
+        obj = super().get_object()
+        if self.action in ('update', 'partial_update', 'destroy'):
+            if obj.vendedor_id != self.request.user.id:
+                from rest_framework.exceptions import PermissionDenied
+                raise PermissionDenied('Solo el vendedor puede modificar este artículo.')
+        return obj
+
+    def perform_create(self, serializer):
+        # Una publicación nueva siempre debe aparecer en el catálogo público.
+        # ``activo`` se mantiene editable en actualizaciones para que el
+        # vendedor pueda retirarla posteriormente desde su gestión.
+        serializer.save(vendedor=self.request.user, activo=True)

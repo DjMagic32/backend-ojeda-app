@@ -11,6 +11,7 @@ media/
 # Ignorar configuraciones de entorno virtual (por si usas uno)
 venv/
 .env
+.env.production
 env/
 
 # Ignorar archivos del sistema

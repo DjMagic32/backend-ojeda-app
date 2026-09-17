@@ -9,21 +9,49 @@ from .views import (
     TiendaViewSet,
     ProductoTiendaViewSet,
     CarritoView,
+    ConversationViewSet,
+    ExpoPushTokenView,
     PedidoView,
     CategoriaViewSet,
     ProductoViewSet,
     ComentarioViewSet,
     ComentarioProductoViewSet,
     ReferenciaViewSet,
+    StoreDashboardView,
+    TasaCambioHistoryView,
+    TasaCambioView,
     WalletViewSet,
     WalletActionView,
     CreateUserView,
+    DriverDocumentosView,
+    EmailDisponibleView,
     UsuarioDetalleView,
+    UsuarioProfileUpdateView,
     StoreOrderViewSet,
+    MiTiendaView,
+    MiNegocioView,
+    SucursalViewSet,
+    AlmacenViewSet,
+    InventarioAlmacenViewSet,
+    TransferenciaInventarioViewSet,
+    RunMigrationsView,
+    ProductoFavoritoView,
+    NotificacionListView,
+    NotificacionMarkReadView,
+    NotificacionUnreadCountView,
+    ReporteCreateView,
+    VentaPresencialCreateView,
+    OperacionVentaPresencialView,
+    CajaView,
+    VentaCajaView,
+    CuentaPorCobrarView,
+    CuentaPorPagarView,
+    GastoView,
+    ArticuloUsadoViewSet,
 )
 
 router = DefaultRouter()
-router.register(r'usuarios', UsuarioViewSet)
+router.register(r'usuarios', UsuarioViewSet, basename='usuarios')
 router.register(r'tiendas', TiendaViewSet)
 router.register(r'productos-tienda', ProductoTiendaViewSet)
 router.register(r'store-orders', StoreOrderViewSet, basename='store-orders')
@@ -33,12 +61,53 @@ router.register(r'comentarios', ComentarioViewSet)
 router.register(r'comentarios-producto', ComentarioProductoViewSet)
 router.register(r'referencias', ReferenciaViewSet)
 router.register(r'wallets', WalletViewSet)
+router.register(r'conversations', ConversationViewSet, basename='conversations')
+router.register(r'articulos-usados', ArticuloUsadoViewSet, basename='articulos-usados')
+router.register(r'sucursales', SucursalViewSet, basename='sucursales')
+router.register(r'almacenes', AlmacenViewSet, basename='almacenes')
+router.register(r'inventario-almacenes', InventarioAlmacenViewSet, basename='inventario-almacenes')
+router.register(r'transferencias-inventario', TransferenciaInventarioViewSet, basename='transferencias-inventario')
 
 urlpatterns = [
-    path('app/', include(router.urls)),
+    path('', include(router.urls)),
     path('register-user/', CreateUserView.as_view(), name='user-register'),  # Ruta para crear usuarios
+    path('email-disponible/', EmailDisponibleView.as_view(), name='email-disponible'),
+    path('driver-documentos/', DriverDocumentosView.as_view(), name='driver-documentos'),
     path('carrito/', CarritoView.as_view(), name='carrito'),
     path('pedidos/', PedidoView.as_view(), name='pedidos'),
     path('wallet-action/', WalletActionView.as_view(), name='wallet-action'),
     path('usuario-detalle/', UsuarioDetalleView.as_view(), name='usuario-detalle'),
+    path('usuario-perfil/', UsuarioProfileUpdateView.as_view(), name='usuario-perfil'),
+    path('mi-tienda/', MiTiendaView.as_view(), name='mi-tienda'),
+    path('mi-negocio/', MiNegocioView.as_view(), name='mi-negocio'),
+    path('favoritos/', ProductoFavoritoView.as_view(), name='favoritos'),
+    path('notificaciones/', NotificacionListView.as_view(), name='notificaciones'),
+    path('notificaciones/unread-count/', NotificacionUnreadCountView.as_view(), name='notificaciones-unread-count'),
+    path('notificaciones/<int:pk>/read/', NotificacionMarkReadView.as_view(), name='notificacion-marcar-leida'),
+    path('push-tokens/', ExpoPushTokenView.as_view(), name='push-tokens'),
+    path('exchange-rate/', TasaCambioView.as_view(), name='exchange-rate'),
+    path('exchange-rate/history/', TasaCambioHistoryView.as_view(), name='exchange-rate-history'),
+    path('store/dashboard/', StoreDashboardView.as_view(), name='store-dashboard'),
+    path('reportes/', ReporteCreateView.as_view(), name='reportes'),
+    path('ventas-presenciales/', VentaPresencialCreateView.as_view(), name='ventas-presenciales'),
+    path('ventas-presenciales/operaciones/', OperacionVentaPresencialView.as_view(), name='operaciones-venta'),
+    path('cajas/ventas/', VentaCajaView.as_view(), name='ventas-caja'),
+    path('cajas/sesiones/', CajaView.as_view(http_method_names=['get', 'head', 'options']), name='sesiones-caja'),
+    path('cajas/sesiones/<int:pk>/', CajaView.as_view(http_method_names=['get', 'head', 'options']), name='detalle-caja'),
+    path('cajas/operaciones/', CajaView.as_view(http_method_names=['post', 'options']), name='operaciones-caja'),
+    path('cajas/operaciones/<uuid:clave>/cancelar/', CajaView.as_view(http_method_names=['post', 'options']), name='cancelar-operacion-caja'),
+    path('cuentas-cobrar/', CuentaPorCobrarView.as_view(http_method_names=['get', 'head', 'options']), name='cuentas-cobrar'),
+    path('cuentas-cobrar/<int:pk>/', CuentaPorCobrarView.as_view(http_method_names=['get', 'head', 'options']), name='detalle-cuenta-cobrar'),
+    path('cuentas-cobrar/operaciones/', CuentaPorCobrarView.as_view(http_method_names=['post', 'options']), name='operaciones-cuenta-cobrar'),
+    path('cuentas-cobrar/operaciones/<uuid:clave>/cancelar/', CuentaPorCobrarView.as_view(http_method_names=['post', 'options']), name='cancelar-operacion-cuenta-cobrar'),
+    path('cuentas-pagar/', CuentaPorPagarView.as_view(http_method_names=['get', 'head', 'options']), name='cuentas-pagar'),
+    path('cuentas-pagar/<int:pk>/', CuentaPorPagarView.as_view(http_method_names=['get', 'head', 'options']), name='detalle-cuenta-pagar'),
+    path('cuentas-pagar/operaciones/', CuentaPorPagarView.as_view(http_method_names=['post', 'options']), name='operaciones-cuenta-pagar'),
+    path('cuentas-pagar/operaciones/<uuid:clave>/cancelar/', CuentaPorPagarView.as_view(http_method_names=['post', 'options']), name='cancelar-operacion-cuenta-pagar'),
+    path('gastos/', GastoView.as_view(http_method_names=['get', 'head', 'options']), name='gastos'),
+    path('gastos/<int:pk>/', GastoView.as_view(http_method_names=['get', 'head', 'options']), name='detalle-gasto'),
+    path('gastos/operaciones/', GastoView.as_view(http_method_names=['post', 'options']), name='operaciones-gasto'),
+    path('gastos/operaciones/<uuid:clave>/cancelar/', GastoView.as_view(http_method_names=['post', 'options']), name='cancelar-operacion-gasto'),
+    path('ventas-presenciales/operaciones/<uuid:clave>/cancelar/', OperacionVentaPresencialView.as_view(), name='cancelar-operacion-venta'),
+    path('admin/run-migrations/', RunMigrationsView.as_view(), name='run-migrations'),
 ]

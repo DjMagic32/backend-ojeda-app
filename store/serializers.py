@@ -1,26 +1,85 @@
 from decimal import Decimal
+from typing import Any
 
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 from .models import (
     Producto,
     Categoria,
+    Conversation,
+    ExpoPushToken,
     ItemCarrito,
     Carrito,
+    Message,
     Pedido,
     Tienda,
+    Negocio,
+    NegocioMiembro,
+    Sucursal,
+    Almacen,
     ProductoTienda,
     Comentario,
     ComentarioProducto,
     Referencia,
+    TasaCambio,
     Wallet,
     Usuario,
     StoreOrder,
+    StoreOrderItem,
+    OrderPayment,
+    ProductoFavorito,
+    Notificacion,
+    Reporte,
+    InventarioAlmacen,
+    MovimientoStock,
+    TransferenciaInventario,
+    ArticuloUsado,
+    MovimientoCaja,
+    AbonoCuentaPorCobrar,
+    AbonoCuentaPorPagar,
+    Gasto,
+    MONEDAS,
 )
+from .upload_validation import validate_image_upload
 
 class UsuarioSerializer(serializers.ModelSerializer):
+    avatar = serializers.ImageField(required=False, allow_null=True)
+
     class Meta:
         model = Usuario
         fields = '__all__'
+        extra_kwargs = {'password': {'write_only': True}}
+        read_only_fields = [
+            'id',
+            'last_login',
+            'username',
+            'email',
+            'is_superuser',
+            'is_staff',
+            'is_active',
+            'date_joined',
+            'groups',
+            'user_permissions',
+            'rol',
+            'cedula_pasaporte',
+            'foto_identificacion',
+            'ingresos_minimos_mensuales',
+            'es_conductor',
+            'registro_completo',
+        ]
+
+    def update(self, instance, validated_data):
+        # El cambio de contraseña tiene endpoints dedicados que llaman a
+        # set_password. Nunca aceptamos una contraseña plana aquí.
+        validated_data.pop('password', None)
+        return super().update(instance, validated_data)
+
+    def validate_avatar(self, value):
+        if value is not None:
+            validate_image_upload(value)
+        return value
 
 class CategoriaSerializer(serializers.ModelSerializer):
     class Meta:
@@ -33,24 +92,85 @@ class ProductoSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class ProductoTiendaSerializer(serializers.ModelSerializer):
+    tienda_nombre = serializers.CharField(source='tienda.nombre', read_only=True)
+    # El UniqueConstraint parcial (tienda, codigo_barras) hace que DRF fuerce
+    # required=True sobre este campo aunque el modelo sea null/blank. Lo
+    # declaramos explícito para que sea opcional; la unicidad por tienda se
+    # valida en validate_codigo_barras.
+    codigo_barras = serializers.CharField(
+        max_length=64, required=False, allow_null=True, allow_blank=True
+    )
+
     class Meta:
         model = ProductoTienda
         fields = '__all__'
         read_only_fields = ['tienda']
 
+    def validate(self, attrs):
+        # Los productos nuevos deben quedar clasificados para que puedan
+        # aparecer correctamente en el catálogo general y en Comidas.
+        if self.instance is None and attrs.get('categoria') is None:
+            raise serializers.ValidationError({
+                'categoria': 'Debes seleccionar una categoría.',
+            })
+
+        categoria = attrs.get('categoria')
+        tipo = attrs.get('tipo')
+        if categoria is not None and tipo is not None and categoria.tipo != tipo:
+            raise serializers.ValidationError({
+                'categoria': 'La categoría no corresponde al tipo publicado.',
+            })
+        for field_name in ('imagen', 'imagen_2', 'imagen_3'):
+            image = attrs.get(field_name)
+            if image is not None:
+                validate_image_upload(image)
+        return attrs
+
+    def validate_codigo_barras(self, value):
+        value = (value or '').strip() or None
+        if value is None:
+            return None
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            qs = ProductoTienda.objects.filter(
+                tienda__usuario=request.user, codigo_barras=value
+            )
+            if self.instance:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                raise serializers.ValidationError(
+                    'Ya tienes otro producto con este código de barras.'
+                )
+        return value
+
 class ItemCarritoSerializer(serializers.ModelSerializer):
     subtotal = serializers.ReadOnlyField()
+    producto_tienda_detalle = ProductoTiendaSerializer(source='producto_tienda', read_only=True)
 
     class Meta:
         model = ItemCarrito
-        fields = ['id', 'producto', 'cantidad', 'subtotal']
+        fields = ['id', 'producto_tienda', 'producto_tienda_detalle', 'cantidad', 'subtotal']
+
+
+class ConversationLastMessageSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    contenido = serializers.CharField()
+    autor_id = serializers.IntegerField()
+    creado = serializers.DateTimeField()
+    leido = serializers.BooleanField()
+
 
 class CarritoSerializer(serializers.ModelSerializer):
     items = ItemCarritoSerializer(many=True, read_only=True)
+    total = serializers.SerializerMethodField()
 
     class Meta:
         model = Carrito
-        fields = ['id', 'usuario', 'items', 'creado']
+        fields = ['id', 'usuario', 'items', 'creado', 'total']
+
+    @extend_schema_field(serializers.DecimalField(max_digits=12, decimal_places=2))
+    def get_total(self, obj: Carrito) -> Decimal:
+        return sum(item.subtotal for item in obj.items.all())
 
 class PedidoSerializer(serializers.ModelSerializer):
     items = ItemCarritoSerializer(many=True, read_only=True)
@@ -62,32 +182,206 @@ class PedidoSerializer(serializers.ModelSerializer):
 class TiendaSerializer(serializers.ModelSerializer):
     class Meta:
         model = Tienda
-        fields = '__all__'
+        fields = [
+            'id',
+            'usuario',
+            'nombre',
+            'descripcion',
+            'direccion',
+            'telefono',
+            'logo',
+            'banner',
+            'informacion_fiscal',
+            'ubicacion_lat',
+            'ubicacion_lng',
+            'ubicacion_actualizada',
+            'pago_movil_banco',
+            'pago_movil_telefono',
+            'pago_movil_cedula',
+            'verificada',
+            'creado',
+        ]
+        read_only_fields = ['id', 'usuario', 'verificada', 'creado']
+
+    def validate(self, attrs):
+        for field_name in ('logo', 'banner'):
+            image = attrs.get(field_name)
+            if image is not None:
+                validate_image_upload(image)
+        return attrs
+
+
+class TiendaPublicSerializer(serializers.ModelSerializer):
+    """Datos públicos de una tienda, sin información fiscal ni de cobro."""
+
+    class Meta:
+        model = Tienda
+        fields = [
+            'id',
+            'nombre',
+            'descripcion',
+            'direccion',
+            'telefono',
+            'logo',
+            'banner',
+            'ubicacion_lat',
+            'ubicacion_lng',
+            'ubicacion_actualizada',
+            'verificada',
+            'creado',
+        ]
+        read_only_fields = fields
+
+
+class NegocioMiembroSerializer(serializers.ModelSerializer):
+    usuario_nombre = serializers.SerializerMethodField()
+    usuario_email = serializers.EmailField(source='usuario.email', read_only=True)
+
+    class Meta:
+        model = NegocioMiembro
+        fields = [
+            'id',
+            'usuario',
+            'usuario_nombre',
+            'usuario_email',
+            'rol',
+            'activo',
+            'creado',
+        ]
+        read_only_fields = fields
+
+    def get_usuario_nombre(self, obj):
+        nombre = obj.usuario.get_full_name().strip()
+        return nombre or obj.usuario.username
+
+
+class AlmacenSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Almacen
+        fields = [
+            'id',
+            'sucursal',
+            'nombre',
+            'codigo',
+            'activo',
+            'creado',
+            'actualizado',
+        ]
+        read_only_fields = ['id', 'creado', 'actualizado']
+
+    def validate_nombre(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError('El nombre del almacén es requerido.')
+        return value
+
+    def validate_codigo(self, value):
+        value = value.strip().upper()
+        if not value:
+            raise serializers.ValidationError('El código del almacén es requerido.')
+        return value
+
+
+class SucursalSerializer(serializers.ModelSerializer):
+    almacenes = AlmacenSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Sucursal
+        fields = [
+            'id',
+            'negocio',
+            'nombre',
+            'codigo',
+            'direccion',
+            'activo',
+            'almacenes',
+            'creado',
+            'actualizado',
+        ]
+        read_only_fields = ['id', 'negocio', 'almacenes', 'creado', 'actualizado']
+
+    def validate_nombre(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError('El nombre de la sucursal es requerido.')
+        return value
+
+    def validate_codigo(self, value):
+        value = value.strip().upper()
+        if not value:
+            raise serializers.ValidationError('El código de la sucursal es requerido.')
+        return value
+
+    def validate_direccion(self, value):
+        return value.strip()
+
+
+class NegocioSerializer(serializers.ModelSerializer):
+    tienda_nombre = serializers.CharField(source='tienda.nombre', read_only=True)
+    miembros = NegocioMiembroSerializer(many=True, read_only=True)
+    sucursales = SucursalSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Negocio
+        fields = [
+            'id',
+            'tienda',
+            'tienda_nombre',
+            'nombre_legal',
+            'activo',
+            'miembros',
+            'sucursales',
+            'creado',
+            'actualizado',
+        ]
+        read_only_fields = fields
 
 class ComentarioSerializer(serializers.ModelSerializer):
     class Meta:
         model = Comentario
         fields = '__all__'
+        read_only_fields = ['id', 'usuario', 'creado']
 
 class ComentarioProductoSerializer(serializers.ModelSerializer):
     class Meta:
         model = ComentarioProducto
         fields = '__all__'
+        read_only_fields = ['id', 'usuario', 'creado']
 
 class ReferenciaSerializer(serializers.ModelSerializer):
     class Meta:
         model = Referencia
         fields = '__all__'
+        read_only_fields = ['id', 'usuario', 'creado']
 
 class WalletSerializer(serializers.ModelSerializer):
     class Meta:
         model = Wallet
         fields = '__all__'
+        read_only_fields = ['id', 'usuario', 'saldo', 'actualizado']
 
 
 class RegisterUserSerializer(serializers.Serializer):
     email = serializers.EmailField()
-    password = serializers.CharField(write_only=True)
+    password = serializers.CharField(
+        write_only=True,
+        min_length=8,
+        error_messages={
+            'min_length': 'La contraseña debe tener al menos 8 caracteres.'
+        },
+    )
+
+    def validate_password(self, value):
+        try:
+            validate_password(value)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(exc.messages) from exc
+        return value
+
+    def validate_foto_identificacion(self, value):
+        if value is not None:
+            validate_image_upload(value)
+        return value
     nombre = serializers.CharField(required=False, allow_blank=True)
     apellido = serializers.CharField(required=False, allow_blank=True)
     rol = serializers.ChoiceField(choices=Usuario.ROLES, default=Usuario.ES_CLIENTE)
@@ -95,20 +389,82 @@ class RegisterUserSerializer(serializers.Serializer):
     genero = serializers.ChoiceField(
         choices=Usuario.GENEROS, required=False, allow_blank=True, allow_null=True
     )
-    edad = serializers.IntegerField(required=False, allow_null=True)
+    edad = serializers.IntegerField(
+        required=False,
+        allow_null=True,
+        min_value=18,
+        max_value=100,
+        error_messages={
+            'min_value': 'Debes ser mayor de 18 años para registrarte.',
+            'max_value': 'Ingresa una edad válida.',
+            'invalid': 'Ingresa una edad válida (solo números).',
+        },
+    )
     cedula_pasaporte = serializers.CharField(
         required=False, allow_blank=True, allow_null=True
     )
     foto_identificacion = serializers.FileField(
         required=False, allow_null=True, use_url=False
     )
-    nombre_tienda = serializers.CharField(required=False, allow_blank=True)
-    direccion = serializers.CharField(required=False, allow_blank=True)
-    telefono_tienda = serializers.CharField(required=False, allow_blank=True)
-    informacion_fiscal = serializers.CharField(required=False, allow_blank=True)
+    nombre_tienda = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
+    direccion = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
+    telefono_tienda = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
+    informacion_fiscal = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
+    ubicacion_lat = serializers.DecimalField(
+        max_digits=9, decimal_places=6, required=False, allow_null=True
+    )
+    ubicacion_lng = serializers.DecimalField(
+        max_digits=9, decimal_places=6, required=False, allow_null=True
+    )
     ingresos_minimos_mensuales = serializers.CharField(
         required=False, allow_blank=True, allow_null=True
     )
+
+    def validate_cedula_pasaporte(self, value):
+        """Normaliza la identificación y evita un error 500 por duplicados."""
+        cleaned = (value or '').strip()
+        if not cleaned:
+            return None
+        if Usuario.objects.filter(cedula_pasaporte__iexact=cleaned).exists():
+            raise serializers.ValidationError(
+                'Esta cédula o pasaporte ya está registrado.'
+            )
+        return cleaned
+
+    def validate_ingresos_minimos_mensuales(self, value):
+        """El ingreso es opcional, pero si se informa debe ser un monto válido."""
+        if value is None or value == '':
+            return None
+
+        normalized = str(value).strip().replace(',', '.')
+        try:
+            amount = Decimal(normalized)
+        except Exception as exc:
+            raise serializers.ValidationError(
+                'Ingresa un monto válido o deja este campo vacío.'
+            ) from exc
+
+        if amount < 0:
+            raise serializers.ValidationError(
+                'Los ingresos mínimos mensuales no pueden ser negativos.'
+            )
+        if len(normalized.replace('.', '').lstrip('+-')) > 10:
+            raise serializers.ValidationError(
+                'El monto de ingresos es demasiado grande.'
+            )
+        if abs(amount.as_tuple().exponent) > 2:
+            raise serializers.ValidationError(
+                'Los ingresos pueden tener como máximo dos decimales.'
+            )
+        return amount
 
 
 class CarritoItemAddSerializer(serializers.Serializer):
@@ -118,6 +474,11 @@ class CarritoItemAddSerializer(serializers.Serializer):
 
 class CarritoItemRemoveSerializer(serializers.Serializer):
     producto_id = serializers.IntegerField()
+
+
+class CarritoItemUpdateSerializer(serializers.Serializer):
+    producto_id = serializers.IntegerField()
+    cantidad = serializers.IntegerField(min_value=1)
 
 
 class WalletActionRequestSerializer(serializers.Serializer):
@@ -133,11 +494,44 @@ class UsuarioDetalleRequestSerializer(serializers.Serializer):
     token = serializers.CharField()
 
 
+class OrderPaymentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = OrderPayment
+        fields = [
+            'id',
+            'order',
+            'metodo',
+            'referencia',
+            'captura',
+            'estado',
+            'motivo_rechazo',
+            'creado',
+            'actualizado',
+        ]
+        read_only_fields = ['id', 'order', 'estado', 'motivo_rechazo', 'creado', 'actualizado']
+
+    def validate_captura(self, value):
+        if value is not None:
+            validate_image_upload(value)
+        return value
+
+
+class StoreOrderItemSerializer(serializers.ModelSerializer):
+    producto = ProductoTiendaSerializer(read_only=True)
+
+    class Meta:
+        model = StoreOrderItem
+        fields = ['id', 'producto', 'cantidad', 'precio_unitario', 'subtotal']
+        read_only_fields = fields
+
+
 class StoreOrderSerializer(serializers.ModelSerializer):
     producto = ProductoTiendaSerializer(read_only=True)
     producto_id = serializers.PrimaryKeyRelatedField(
         source='producto', queryset=ProductoTienda.objects.all(), write_only=True
     )
+    pago = serializers.SerializerMethodField()
+    items = StoreOrderItemSerializer(many=True, read_only=True)
 
     class Meta:
         model = StoreOrder
@@ -149,9 +543,14 @@ class StoreOrderSerializer(serializers.ModelSerializer):
             'cantidad',
             'precio_unitario',
             'total',
+            'moneda',
+            'tasa_aplicada',
             'estado',
+            'canal',
             'direccion_entrega',
             'notas',
+            'pago',
+            'items',
             'creado',
             'actualizado',
         ]
@@ -160,7 +559,489 @@ class StoreOrderSerializer(serializers.ModelSerializer):
             'usuario',
             'precio_unitario',
             'total',
+            'moneda',
+            'tasa_aplicada',
             'estado',
+            'canal',
             'creado',
             'actualizado',
         ]
+
+    @extend_schema_field(OrderPaymentSerializer(allow_null=True))
+    def get_pago(self, obj):
+        pago = obj.pagos.first()
+        if not pago:
+            return None
+        return OrderPaymentSerializer(pago, context=self.context).data
+
+
+class ProductoFavoritoSerializer(serializers.ModelSerializer):
+    producto_detalle = ProductoTiendaSerializer(source='producto', read_only=True)
+
+    class Meta:
+        model = ProductoFavorito
+        fields = ['id', 'producto', 'producto_detalle', 'creado']
+        read_only_fields = ['id', 'creado']
+
+
+class NotificacionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Notificacion
+        fields = ['id', 'titulo', 'mensaje', 'tipo', 'data', 'leido', 'creado']
+        read_only_fields = ['id', 'creado']
+
+
+class ChatParticipantSerializer(serializers.ModelSerializer):
+    avatar = serializers.ImageField(read_only=True)
+
+    class Meta:
+        model = Usuario
+        fields = ['id', 'email', 'first_name', 'last_name', 'avatar', 'rol']
+
+
+class MessageSerializer(serializers.ModelSerializer):
+    autor = ChatParticipantSerializer(read_only=True)
+    es_mio = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Message
+        fields = [
+            'id',
+            'conversation',
+            'autor',
+            'contenido',
+            'adjunto',
+            'adjunto_nombre',
+            'adjunto_tipo',
+            'leido',
+            'creado',
+            'es_mio',
+        ]
+        read_only_fields = [
+            'id',
+            'autor',
+            'adjunto',
+            'adjunto_nombre',
+            'adjunto_tipo',
+            'leido',
+            'creado',
+            'es_mio',
+        ]
+
+    def get_es_mio(self, obj: Message) -> bool:
+        request = self.context.get('request')
+        return bool(request and request.user.is_authenticated and obj.autor_id == request.user.id)
+
+
+class ConversationSerializer(serializers.ModelSerializer):
+    participantes = ChatParticipantSerializer(many=True, read_only=True)
+    ultimo_mensaje = serializers.SerializerMethodField()
+    no_leidos = serializers.SerializerMethodField()
+    producto = serializers.PrimaryKeyRelatedField(read_only=True)
+
+    class Meta:
+        model = Conversation
+        fields = ['id', 'participantes', 'producto', 'ultimo_mensaje', 'no_leidos', 'creado', 'actualizado']
+
+    @extend_schema_field(ConversationLastMessageSerializer(allow_null=True))
+    def get_ultimo_mensaje(self, obj: Conversation) -> dict[str, Any] | None:
+        msg = obj.mensajes.order_by('-creado').first()
+        if not msg:
+            return None
+        return {
+            'id': msg.id,
+            'contenido': msg.contenido,
+            'autor_id': msg.autor_id,
+            'creado': msg.creado,
+            'leido': msg.leido,
+        }
+
+    def get_no_leidos(self, obj: Conversation) -> int:
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return 0
+        return obj.mensajes.filter(leido=False).exclude(autor=request.user).count()
+
+
+class ConversationCreateSerializer(serializers.Serializer):
+    """Inicia o recupera una conversación con otro usuario, opcionalmente sobre un producto."""
+
+    destinatario_id = serializers.IntegerField(required=False)
+    producto_id = serializers.IntegerField(required=False)
+
+    def validate(self, attrs):
+        if not attrs.get('destinatario_id') and not attrs.get('producto_id'):
+            raise serializers.ValidationError('Debes indicar destinatario_id o producto_id.')
+        return attrs
+
+
+class ExpoPushTokenSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ExpoPushToken
+        fields = ['id', 'token', 'plataforma', 'creado']
+        read_only_fields = ['id', 'creado']
+
+
+class TasaCambioSerializer(serializers.ModelSerializer):
+    registrado_por_email = serializers.CharField(
+        source='registrado_por.email', read_only=True, default=None
+    )
+
+    class Meta:
+        model = TasaCambio
+        fields = ['id', 'valor_bs', 'fuente', 'creado', 'registrado_por_email']
+        read_only_fields = ['id', 'creado', 'registrado_por_email']
+
+    def validate_valor_bs(self, value):
+        if value <= 0:
+            raise serializers.ValidationError('La tasa debe ser mayor a 0.')
+        return value
+
+
+class StoreDashboardSerializer(serializers.Serializer):
+    """Schema-only: la respuesta real se arma en la vista."""
+
+    rango_dias = serializers.IntegerField()
+    ingresos_usd = serializers.DecimalField(max_digits=14, decimal_places=2)
+    ingresos_ves = serializers.DecimalField(max_digits=16, decimal_places=2)
+    ordenes_total = serializers.IntegerField()
+    ordenes_por_estado = serializers.DictField(child=serializers.IntegerField())
+    productos_top = serializers.ListField(child=serializers.DictField())
+    serie_diaria = serializers.ListField(child=serializers.DictField())
+    tasa_vigente = TasaCambioSerializer(allow_null=True)
+
+
+class ReporteSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Reporte
+        fields = ['id', 'tienda', 'producto', 'motivo', 'descripcion', 'estado', 'creado']
+        read_only_fields = ['id', 'estado', 'creado']
+
+    def validate(self, attrs):
+        producto = attrs.get('producto')
+        if not attrs.get('tienda') and not producto:
+            raise serializers.ValidationError('Debes indicar la tienda o el producto a reportar.')
+        if producto:
+            attrs['tienda'] = producto.tienda
+        return attrs
+
+    def create(self, validated_data):
+        validated_data['reportante'] = self.context['request'].user
+        return super().create(validated_data)
+
+
+class HistorialStockQuerySerializer(serializers.Serializer):
+    paginado = serializers.BooleanField(default=False, error_messages={
+        'invalid': 'Indica un valor válido para paginado (1 o 0).',
+    })
+    almacen_id = serializers.IntegerField(required=False, min_value=1, max_value=9223372036854775807,
+        error_messages={'invalid': 'Indica un almacén válido.',
+                        'min_value': 'Indica un almacén válido.',
+                        'max_value': 'Indica un almacén válido.'})
+    antes_de = serializers.IntegerField(required=False, min_value=1, max_value=9223372036854775807,
+        error_messages={'invalid': 'El cursor del historial no es válido.',
+                        'min_value': 'El cursor del historial no es válido.',
+                        'max_value': 'El cursor del historial no es válido.'})
+    origen = serializers.ChoiceField(choices=MovimientoStock.ORIGENES, required=False,
+        error_messages={'invalid_choice': 'El origen del movimiento no es válido.'})
+    dias = serializers.ChoiceField(choices=[7, 30, 90], required=False,
+        error_messages={'invalid_choice': 'Selecciona un período de 7, 30 o 90 días.'})
+
+    def validate(self, attrs):
+        if 'antes_de' in attrs and not attrs['paginado']:
+            raise serializers.ValidationError('El cursor requiere paginado=1.')
+        return attrs
+
+
+class MovimientoStockSerializer(serializers.ModelSerializer):
+    almacen_nombre = serializers.CharField(source='almacen.nombre', read_only=True, allow_null=True)
+    sucursal_nombre = serializers.CharField(
+        source='almacen.sucursal.nombre', read_only=True, allow_null=True
+    )
+
+    class Meta:
+        model = MovimientoStock
+        fields = [
+            'id',
+            'producto',
+            'almacen',
+            'almacen_nombre',
+            'sucursal_nombre',
+            'transferencia',
+            'tipo',
+            'cantidad',
+            'stock_resultante',
+            'stock_almacen_resultante',
+            'origen',
+            'order',
+            'creado',
+        ]
+        read_only_fields = fields
+
+
+class InventarioAlmacenSerializer(serializers.ModelSerializer):
+    producto_nombre = serializers.CharField(source='producto.nombre', read_only=True)
+    producto_tipo = serializers.CharField(source='producto.tipo', read_only=True)
+    almacen_nombre = serializers.CharField(source='almacen.nombre', read_only=True)
+    sucursal_id = serializers.IntegerField(source='almacen.sucursal_id', read_only=True)
+    sucursal_nombre = serializers.CharField(source='almacen.sucursal.nombre', read_only=True)
+
+    class Meta:
+        model = InventarioAlmacen
+        fields = [
+            'id',
+            'producto',
+            'producto_nombre',
+            'producto_tipo',
+            'almacen',
+            'almacen_nombre',
+            'sucursal_id',
+            'sucursal_nombre',
+            'cantidad',
+            'actualizado',
+        ]
+        read_only_fields = fields
+
+
+class TransferenciaInventarioSerializer(serializers.ModelSerializer):
+    producto_nombre = serializers.CharField(source='producto.nombre', read_only=True)
+    almacen_origen_nombre = serializers.CharField(source='almacen_origen.nombre', read_only=True)
+    almacen_destino_nombre = serializers.CharField(source='almacen_destino.nombre', read_only=True)
+    creado_por_email = serializers.EmailField(source='creado_por.email', read_only=True)
+
+    class Meta:
+        model = TransferenciaInventario
+        fields = [
+            'id',
+            'producto',
+            'producto_nombre',
+            'almacen_origen',
+            'almacen_origen_nombre',
+            'almacen_destino',
+            'almacen_destino_nombre',
+            'cantidad',
+            'creado_por',
+            'creado_por_email',
+            'notas',
+            'creado',
+        ]
+        read_only_fields = fields
+
+
+class TransferenciaInventarioCreateSerializer(serializers.Serializer):
+    producto_id = serializers.IntegerField(min_value=1)
+    almacen_origen_id = serializers.IntegerField(min_value=1)
+    almacen_destino_id = serializers.IntegerField(min_value=1)
+    cantidad = serializers.IntegerField(min_value=1)
+    notas = serializers.CharField(required=False, allow_blank=True)
+
+
+class AjusteStockSerializer(serializers.Serializer):
+    delta = serializers.IntegerField(required=False)
+    nuevo_stock = serializers.IntegerField(required=False, min_value=0)
+    almacen_id = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+    motivo = serializers.CharField(required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        tiene_delta = 'delta' in attrs
+        tiene_nuevo = 'nuevo_stock' in attrs
+        if tiene_delta == tiene_nuevo:
+            raise serializers.ValidationError('Indica "delta" o "nuevo_stock" (solo uno).')
+        if tiene_delta and attrs['delta'] == 0:
+            raise serializers.ValidationError('El delta no puede ser cero.')
+        return attrs
+
+
+class VentaPresencialItemSerializer(serializers.Serializer):
+    producto_id = serializers.IntegerField()
+    cantidad = serializers.IntegerField(min_value=1)
+
+
+class VentaPresencialSerializer(serializers.Serializer):
+    items = VentaPresencialItemSerializer(many=True, allow_empty=False)
+    almacen_id = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+    notas = serializers.CharField(required=False, allow_blank=True)
+
+
+class OperacionVentaPresencialSerializer(VentaPresencialSerializer):
+    clave_operacion = serializers.UUIDField(error_messages={
+        'required': 'Indica la clave de la operación.',
+        'invalid': 'La clave de la operación no es válida.',
+        'null': 'Indica la clave de la operación.',
+    })
+
+
+class VentaCajaSerializer(OperacionVentaPresencialSerializer):
+    sesion_caja_id = serializers.IntegerField(min_value=1)
+    almacen_id = serializers.IntegerField(min_value=1)
+    medio_pago = serializers.ChoiceField(choices=MovimientoCaja.MEDIOS)
+
+
+class OperacionCajaSerializer(serializers.Serializer):
+    clave_operacion = serializers.UUIDField()
+    accion = serializers.ChoiceField(choices=['abrir', 'entrada', 'retiro', 'cerrar'])
+    almacen_id = serializers.IntegerField(required=False, min_value=1)
+    sesion_id = serializers.IntegerField(required=False, min_value=1)
+    fondo_usd = serializers.DecimalField(max_digits=14, decimal_places=2, min_value=Decimal('0'), required=False)
+    fondo_ves = serializers.DecimalField(max_digits=14, decimal_places=2, min_value=Decimal('0'), required=False)
+    contado_usd = serializers.DecimalField(max_digits=14, decimal_places=2, min_value=Decimal('0'), required=False)
+    contado_ves = serializers.DecimalField(max_digits=14, decimal_places=2, min_value=Decimal('0'), required=False)
+    monto = serializers.DecimalField(max_digits=14, decimal_places=2, min_value=Decimal('0.01'), required=False)
+    moneda = serializers.ChoiceField(choices=['USD', 'VES'], required=False)
+    motivo = serializers.CharField(max_length=500, required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        requeridos = {
+            'abrir': ['almacen_id', 'fondo_usd', 'fondo_ves'],
+            'entrada': ['sesion_id', 'monto', 'moneda', 'motivo'],
+            'retiro': ['sesion_id', 'monto', 'moneda', 'motivo'],
+            'cerrar': ['sesion_id', 'contado_usd', 'contado_ves'],
+        }[attrs['accion']]
+        if any(campo not in attrs for campo in requeridos):
+            raise serializers.ValidationError('Completa todos los datos de la operación.')
+        if attrs['accion'] in ('entrada', 'retiro') and not attrs['motivo'].strip():
+            raise serializers.ValidationError('Indica el motivo de la entrada o retiro.')
+        permitidos = set(requeridos) | {'accion', 'clave_operacion'}
+        if attrs['accion'] == 'cerrar':
+            permitidos.add('motivo')
+        if set(attrs) - permitidos:
+            raise serializers.ValidationError('La operación contiene campos que no le corresponden.')
+        return attrs
+
+
+class MovimientoCajaSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MovimientoCaja
+        fields = ['id', 'sesion', 'tipo', 'moneda', 'monto', 'medio_pago', 'motivo', 'usuario_id', 'order_id', 'creado']
+        read_only_fields = fields
+
+
+class OperacionCuentaPorCobrarSerializer(serializers.Serializer):
+    clave_operacion = serializers.UUIDField(error_messages={
+        'required': 'Indica la clave de la operación.',
+        'invalid': 'La clave de la operación no es válida.',
+        'null': 'Indica la clave de la operación.',
+    })
+    accion = serializers.ChoiceField(choices=['crear', 'abonar', 'anular'])
+    cuenta_id = serializers.IntegerField(required=False, min_value=1)
+    cliente_nombre = serializers.CharField(max_length=200, required=False)
+    cliente_telefono = serializers.CharField(max_length=20, required=False, allow_blank=True)
+    order_id = serializers.IntegerField(required=False, min_value=1)
+    monto_usd = serializers.DecimalField(max_digits=14, decimal_places=2, min_value=Decimal('0.01'), required=False)
+    vencimiento = serializers.DateField(required=False, allow_null=True)
+    notas = serializers.CharField(required=False, allow_blank=True, max_length=1000)
+    medio_pago = serializers.ChoiceField(choices=AbonoCuentaPorCobrar.MEDIOS, required=False)
+    motivo = serializers.CharField(max_length=500, required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        requeridos = {
+            'crear': ['cliente_nombre', 'monto_usd'],
+            'abonar': ['cuenta_id', 'monto_usd'],
+            'anular': ['cuenta_id'],
+        }[attrs['accion']]
+        if any(campo not in attrs for campo in requeridos):
+            raise serializers.ValidationError('Completa todos los datos de la operación.')
+        permitidos = {
+            'crear': {'cliente_nombre', 'cliente_telefono', 'order_id', 'monto_usd', 'vencimiento', 'notas'},
+            'abonar': {'cuenta_id', 'monto_usd', 'medio_pago'},
+            'anular': {'cuenta_id', 'motivo'},
+        }[attrs['accion']] | {'accion', 'clave_operacion'}
+        if set(attrs) - permitidos:
+            raise serializers.ValidationError('La operación contiene campos que no le corresponden.')
+        return attrs
+
+
+class OperacionCuentaPorPagarSerializer(serializers.Serializer):
+    clave_operacion = serializers.UUIDField(error_messages={
+        'required': 'Indica la clave de la operación.',
+        'invalid': 'La clave de la operación no es válida.',
+        'null': 'Indica la clave de la operación.',
+    })
+    accion = serializers.ChoiceField(choices=['crear', 'abonar', 'anular'])
+    cuenta_id = serializers.IntegerField(required=False, min_value=1)
+    proveedor_nombre = serializers.CharField(max_length=200, required=False)
+    proveedor_telefono = serializers.CharField(max_length=20, required=False, allow_blank=True)
+    monto_usd = serializers.DecimalField(max_digits=14, decimal_places=2, min_value=Decimal('0.01'), required=False)
+    vencimiento = serializers.DateField(required=False, allow_null=True)
+    notas = serializers.CharField(required=False, allow_blank=True, max_length=1000)
+    medio_pago = serializers.ChoiceField(choices=AbonoCuentaPorPagar.MEDIOS, required=False)
+    motivo = serializers.CharField(max_length=500, required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        requeridos = {
+            'crear': ['proveedor_nombre', 'monto_usd'],
+            'abonar': ['cuenta_id', 'monto_usd'],
+            'anular': ['cuenta_id'],
+        }[attrs['accion']]
+        if any(campo not in attrs for campo in requeridos):
+            raise serializers.ValidationError('Completa todos los datos de la operación.')
+        permitidos = {
+            'crear': {'proveedor_nombre', 'proveedor_telefono', 'monto_usd', 'vencimiento', 'notas'},
+            'abonar': {'cuenta_id', 'monto_usd', 'medio_pago'},
+            'anular': {'cuenta_id', 'motivo'},
+        }[attrs['accion']] | {'accion', 'clave_operacion'}
+        if set(attrs) - permitidos:
+            raise serializers.ValidationError('La operación contiene campos que no le corresponden.')
+        return attrs
+
+
+class OperacionGastoSerializer(serializers.Serializer):
+    clave_operacion = serializers.UUIDField(error_messages={
+        'required': 'Indica la clave de la operación.',
+        'invalid': 'La clave de la operación no es válida.',
+        'null': 'Indica la clave de la operación.',
+    })
+    accion = serializers.ChoiceField(choices=['crear', 'anular'])
+    gasto_id = serializers.IntegerField(required=False, min_value=1)
+    sucursal_id = serializers.IntegerField(required=False, min_value=1)
+    tipo = serializers.ChoiceField(choices=Gasto.TIPOS, required=False)
+    categoria = serializers.CharField(max_length=100, required=False)
+    descripcion = serializers.CharField(required=False, allow_blank=True, max_length=1000)
+    monto = serializers.DecimalField(max_digits=14, decimal_places=2, min_value=Decimal('0.01'), required=False)
+    moneda = serializers.ChoiceField(choices=MONEDAS, required=False)
+    motivo = serializers.CharField(max_length=500, required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        requeridos = {
+            'crear': ['tipo', 'categoria', 'monto', 'moneda'],
+            'anular': ['gasto_id'],
+        }[attrs['accion']]
+        if any(campo not in attrs for campo in requeridos):
+            raise serializers.ValidationError('Completa todos los datos de la operación.')
+        permitidos = {
+            'crear': {'sucursal_id', 'tipo', 'categoria', 'descripcion', 'monto', 'moneda'},
+            'anular': {'gasto_id', 'motivo'},
+        }[attrs['accion']] | {'accion', 'clave_operacion'}
+        if set(attrs) - permitidos:
+            raise serializers.ValidationError('La operación contiene campos que no le corresponden.')
+        return attrs
+
+
+class ArticuloUsadoVendedorSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Usuario
+        fields = ['id', 'first_name', 'username', 'telefono']
+
+
+class ArticuloUsadoSerializer(serializers.ModelSerializer):
+    vendedor_detalle = ArticuloUsadoVendedorSerializer(source='vendedor', read_only=True)
+
+    class Meta:
+        model = ArticuloUsado
+        fields = [
+            'id', 'vendedor', 'vendedor_detalle', 'titulo', 'descripcion',
+            'precio', 'moneda', 'estado_articulo', 'imagen', 'imagen_2',
+            'activo', 'creado', 'actualizado',
+        ]
+        read_only_fields = ['id', 'vendedor', 'creado', 'actualizado']
+
+    def create(self, validated_data):
+        validated_data['vendedor'] = self.context['request'].user
+        return super().create(validated_data)
+
+    def validate(self, attrs):
+        for field_name in ('imagen', 'imagen_2'):
+            image = attrs.get(field_name)
+            if image is not None:
+                validate_image_upload(image)
+        return attrs

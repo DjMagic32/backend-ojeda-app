@@ -1,0 +1,640 @@
+import graphene
+from django.db.models import Avg
+from graphene_django import DjangoObjectType
+
+from store.models import (
+    Conversation,
+    DriverProfile,
+    Lugar,
+    OrderPayment,
+    ProductoTienda,
+    ServiceRequest,
+    ServiceRequestCandidate,
+    StoreOrder,
+    StoreOrderItem,
+    StoreOrderReview,
+    StoreOrderSellerReview,
+    Tienda,
+    TiendaNombreHistorial,
+    Usuario,
+    Categoria,
+)
+
+
+def _delivery_activo(order):
+    """Servicio de entrega vigente (no cancelado) más reciente de una orden.
+
+    Se define a nivel de módulo porque en los resolvers de graphene ``self`` es
+    la instancia del modelo ``StoreOrder`` (el root), no la del ``ObjectType``.
+    """
+    return (
+        order.service_requests.exclude(estado=ServiceRequest.ESTADO_CANCELADO)
+        .order_by('-creado')
+        .first()
+    )
+
+
+def _absolute_uri(info, file_field):
+    if not file_field:
+        return None
+    request = getattr(info, "context", None)
+    url = getattr(file_field, "url", None)
+    if not url:
+        return None
+    if request and hasattr(request, "build_absolute_uri"):
+        try:
+            return request.build_absolute_uri(url)
+        except Exception:  # pragma: no cover - fallback for malformed request
+            return url
+    return url
+
+
+class TiendaType(DjangoObjectType):
+    usuario = graphene.Int()
+    logo = graphene.String()
+    banner = graphene.String()
+    pago_movil_configurado = graphene.Boolean()
+
+    class Meta:
+        model = Tienda
+        fields = (
+            "id",
+            "usuario",
+            "nombre",
+            "descripcion",
+            "direccion",
+            "telefono",
+            "logo",
+            "banner",
+            "informacion_fiscal",
+            "ubicacion_lat",
+            "ubicacion_lng",
+            "ubicacion_actualizada",
+            "pago_movil_banco",
+            "pago_movil_telefono",
+            "pago_movil_cedula",
+            "verificada",
+            "creado",
+        )
+
+    def resolve_usuario(self, info):  # noqa: D401 - simple id mapping
+        return self.usuario_id
+
+    def resolve_logo(self, info):
+        return _absolute_uri(info, self.logo)
+
+    def resolve_banner(self, info):
+        return _absolute_uri(info, self.banner)
+
+
+class TarifaDeliveryType(graphene.ObjectType):
+    tarifa_base = graphene.Float()
+    tarifa_por_km = graphene.Float()
+    costo_minimo = graphene.Float()
+
+
+class CategoriaType(DjangoObjectType):
+    thumbnail = graphene.String()
+    es_comida = graphene.Boolean()
+
+    class Meta:
+        model = Categoria
+        fields = (
+            "id",
+            "nombre",
+            "descripcion",
+            "tipo",
+            "es_comida",
+            "thumbnail",
+        )
+
+    def resolve_thumbnail(self, info):
+        return _absolute_uri(info, self.thumbnail)
+
+
+class ProductoTiendaType(DjangoObjectType):
+    tienda = graphene.Int()
+    tienda_detalle = graphene.Field(lambda: TiendaType)
+    imagen = graphene.String()
+    imagen_2 = graphene.String()
+    imagen_3 = graphene.String()
+    reviews = graphene.List(lambda: StoreOrderReviewType)
+    average_rating = graphene.Float()
+    total_reviews = graphene.Int()
+    categoria = graphene.Field(CategoriaType)
+    costo_unitario = graphene.Float()
+
+    class Meta:
+        model = ProductoTienda
+        fields = (
+            "id",
+            "tienda",
+            "nombre",
+            "descripcion",
+            "precio",
+            "moneda",
+            "stock",
+            "tipo",
+            "imagen",
+            "imagen_2",
+            "imagen_3",
+            "permite_encargo",
+            "categoria",
+            "codigo_barras",
+            "destacado",
+        )
+
+    def resolve_tienda(self, info):
+        return self.tienda_id
+
+    def resolve_costo_unitario(self, info):
+        user = getattr(info.context, 'user', None)
+        if (
+            user
+            and user.is_authenticated
+            and self.tienda.usuario_id == user.id
+            and self.costo_unitario is not None
+        ):
+            return float(self.costo_unitario)
+        return None
+
+    def resolve_tienda_detalle(self, info):
+        return self.tienda
+
+    def resolve_imagen(self, info):
+        return _absolute_uri(info, self.imagen)
+
+    def resolve_imagen_2(self, info):
+        return _absolute_uri(info, self.imagen_2)
+
+    def resolve_imagen_3(self, info):
+        return _absolute_uri(info, self.imagen_3)
+
+    def resolve_reviews(self, info):
+        return list(
+            self.reviews.select_related('usuario').all()
+        )
+
+    def resolve_average_rating(self, info):
+        aggregate = self.reviews.aggregate(avg=Avg('rating'))
+        average = aggregate.get('avg')
+        return float(average) if average is not None else None
+
+    def resolve_total_reviews(self, info):
+        return self.reviews.count()
+
+    def resolve_categoria(self, info):
+        return self.categoria
+
+
+class StoreOrderReviewType(DjangoObjectType):
+    order = graphene.Int()
+    usuario = graphene.Int()
+    usuario_detalle = graphene.Field(lambda: UsuarioType)
+    producto = graphene.Field(lambda: ProductoTiendaType)
+    etiquetas = graphene.List(graphene.String)
+
+    class Meta:
+        model = StoreOrderReview
+        fields = (
+            'id',
+            'order',
+            'producto',
+            'usuario',
+            'rating',
+            'etiquetas',
+            'comentario',
+            'creado',
+            'actualizado',
+        )
+
+    def resolve_order(self, info):
+        return self.order_id
+
+    def resolve_usuario(self, info):
+        return self.usuario_id
+
+    def resolve_usuario_detalle(self, info):
+        return self.usuario
+
+    def resolve_producto(self, info):
+        return self.producto
+
+    def resolve_etiquetas(self, info):
+        return self.etiquetas or []
+
+
+class TiendaNombreHistorialType(DjangoObjectType):
+    tienda = graphene.Int()
+
+    class Meta:
+        model = TiendaNombreHistorial
+        fields = ('id', 'tienda', 'nombre', 'creado')
+
+    def resolve_tienda(self, info):
+        return self.tienda_id
+
+
+class TiendaReputacionType(graphene.ObjectType):
+    tienda = graphene.Field(TiendaType)
+    total_ventas = graphene.Int()
+    total_resenas = graphene.Int()
+    promedio_calificacion = graphene.Float()
+    fecha_registro = graphene.DateTime()
+    comentarios_positivos = graphene.List(lambda: StoreOrderReviewType)
+    comentarios_negativos = graphene.List(lambda: StoreOrderReviewType)
+    historial_nombres = graphene.List(TiendaNombreHistorialType)
+
+
+class UsuarioType(DjangoObjectType):
+    tienda = graphene.Field(TiendaType)
+    avatar = graphene.String()
+    foto_identificacion = graphene.String()
+    groups = graphene.List(graphene.Int)
+    user_permissions = graphene.List(graphene.Int)
+    perfil_conductor = graphene.Field(lambda: DriverProfileType)
+
+    class Meta:
+        model = Usuario
+        fields = (
+            "id",
+            "last_login",
+            "is_superuser",
+            "username",
+            "first_name",
+            "last_name",
+            "email",
+            "is_staff",
+            "is_active",
+            "date_joined",
+            "rol",
+            "edad",
+            "genero",
+            "telefono",
+            "cedula_pasaporte",
+            "avatar",
+            "foto_identificacion",
+            "ingresos_minimos_mensuales",
+            "es_conductor",
+            "registro_completo",
+            "groups",
+            "user_permissions",
+        )
+
+    def resolve_tienda(self, info):
+        try:
+            return self.tienda
+        except Tienda.DoesNotExist:
+            return None
+
+    def resolve_foto_identificacion(self, info):
+        return _absolute_uri(info, self.foto_identificacion)
+
+    def resolve_avatar(self, info):
+        return _absolute_uri(info, self.avatar)
+
+    def resolve_groups(self, info):
+        return list(self.groups.values_list("id", flat=True))
+
+    def resolve_user_permissions(self, info):
+        return list(self.user_permissions.values_list("id", flat=True))
+
+    def resolve_perfil_conductor(self, info):
+        try:
+            return self.perfil_conductor
+        except DriverProfile.DoesNotExist:
+            return None
+
+
+class OrderPaymentType(DjangoObjectType):
+    captura = graphene.String()
+    # String plano para evitar los enums en mayúsculas de graphene-django
+    metodo = graphene.String()
+    estado = graphene.String()
+
+    class Meta:
+        model = OrderPayment
+        fields = (
+            "id",
+            "metodo",
+            "referencia",
+            "captura",
+            "estado",
+            "motivo_rechazo",
+            "creado",
+            "actualizado",
+        )
+
+    def resolve_captura(self, info):
+        return _absolute_uri(info, self.captura)
+
+
+class StoreOrderItemType(DjangoObjectType):
+    producto = graphene.Field(ProductoTiendaType)
+
+    class Meta:
+        model = StoreOrderItem
+        fields = (
+            "id",
+            "producto",
+            "cantidad",
+            "precio_unitario",
+            "subtotal",
+        )
+
+    def resolve_producto(self, info):
+        return self.producto
+
+
+class StoreOrderType(DjangoObjectType):
+    usuario = graphene.Int()
+    producto = graphene.Field(ProductoTiendaType)
+    review = graphene.Field(StoreOrderReviewType)
+    seller_review = graphene.Field(lambda: StoreOrderSellerReviewType)
+    pago = graphene.Field(OrderPaymentType)
+    items = graphene.List(StoreOrderItemType)
+    delivery_service_id = graphene.Int()
+    # String plano para evitar los enums en mayúsculas de graphene-django
+    delivery_estado = graphene.String()
+
+    class Meta:
+        model = StoreOrder
+        fields = (
+            "id",
+            "usuario",
+            "producto",
+            "cantidad",
+            "precio_unitario",
+            "total",
+            "moneda",
+            "tasa_aplicada",
+            "estado",
+            "direccion_entrega",
+            "notas",
+            "creado",
+            "actualizado",
+            "seller_review",
+        )
+
+    def resolve_usuario(self, info):
+        return self.usuario_id
+
+    def resolve_pago(self, info):
+        return self.pagos.first()
+
+    def resolve_items(self, info):
+        return self.items.all()
+
+    def resolve_delivery_service_id(self, info):
+        servicio = _delivery_activo(self)
+        return servicio.id if servicio else None
+
+    def resolve_delivery_estado(self, info):
+        servicio = _delivery_activo(self)
+        return servicio.estado if servicio else None
+
+    def resolve_producto(self, info):
+        return self.producto
+
+    def resolve_review(self, info):
+        try:
+            return self.review
+        except StoreOrderReview.DoesNotExist:
+            return None
+
+    def resolve_seller_review(self, info):
+        try:
+            return self.seller_review
+        except StoreOrderSellerReview.DoesNotExist:
+            return None
+
+
+class StoreOrderSellerReviewType(DjangoObjectType):
+    order = graphene.Int()
+    tienda = graphene.Int()
+    comprador = graphene.Int()
+    tienda_detalle = graphene.Field(lambda: TiendaType)
+    comprador_detalle = graphene.Field(lambda: UsuarioType)
+
+    class Meta:
+        model = StoreOrderSellerReview
+        fields = (
+            'id',
+            'order',
+            'tienda',
+            'comprador',
+            'rating',
+            'comentario',
+            'creado',
+            'actualizado',
+        )
+
+    def resolve_order(self, info):
+        return self.order_id
+
+    def resolve_tienda(self, info):
+        return self.tienda_id
+
+    def resolve_comprador(self, info):
+        return self.comprador_id
+
+    def resolve_tienda_detalle(self, info):
+        return self.tienda
+
+    def resolve_comprador_detalle(self, info):
+        return self.comprador
+
+
+class DriverProfileType(DjangoObjectType):
+    usuario = graphene.Int()
+    is_complete = graphene.Boolean()
+    cedula_foto_frente = graphene.String()
+    cedula_foto_reverso = graphene.String()
+    licencia_foto = graphene.String()
+
+    class Meta:
+        model = DriverProfile
+        fields = (
+            "id",
+            "usuario",
+            "licencia_numero",
+            "vehiculo_tipo",
+            "vehiculo_placa",
+            "vehiculo_color",
+            "capacidad_paquetes",
+            "estado",
+            "ubicacion_lat",
+            "ubicacion_lng",
+            "actualizado",
+        )
+
+    def resolve_usuario(self, info):
+        return self.usuario_id
+
+    def resolve_is_complete(self, info):
+        return self.is_complete
+
+    def resolve_cedula_foto_frente(self, info):
+        return self.cedula_foto_frente.url if self.cedula_foto_frente else None
+
+    def resolve_cedula_foto_reverso(self, info):
+        return self.cedula_foto_reverso.url if self.cedula_foto_reverso else None
+
+    def resolve_licencia_foto(self, info):
+        return self.licencia_foto.url if self.licencia_foto else None
+
+
+class LugarType(DjangoObjectType):
+    lat = graphene.Float()
+    lng = graphene.Float()
+    distancia_km = graphene.Float()
+
+    class Meta:
+        model = Lugar
+        fields = (
+            'id',
+            'nombre',
+            'categoria',
+            'direccion',
+            'lat',
+            'lng',
+        )
+
+    def resolve_lat(self, info):
+        return float(self.lat)
+
+    def resolve_lng(self, info):
+        return float(self.lng)
+
+    def resolve_distancia_km(self, info):
+        return getattr(self, '_distancia_km', None)
+
+
+class LugarBusquedaType(graphene.ObjectType):
+    id = graphene.String(required=True)
+    nombre = graphene.String(required=True)
+    categoria = graphene.String(required=True)
+    direccion = graphene.String()
+    lat = graphene.Float(required=True)
+    lng = graphene.Float(required=True)
+    distancia_km = graphene.Float()
+    fuente = graphene.String()
+    google_maps_uri = graphene.String()
+
+
+class DestinoRecienteType(graphene.ObjectType):
+    id = graphene.ID(required=True)
+    nombre = graphene.String(required=True)
+    direccion = graphene.String()
+    lat = graphene.Float(required=True)
+    lng = graphene.Float(required=True)
+    ultima_vez = graphene.DateTime()
+
+
+class ServiceRequestType(DjangoObjectType):
+    cliente = graphene.Int()
+    driver = graphene.Int()
+    mi_candidatura_estado = graphene.String()
+    store_order = graphene.Field(StoreOrderType)
+    ruta_geojson = graphene.JSONString()
+    cliente_detalle = graphene.Field(UsuarioType)
+    driver_detalle = graphene.Field(UsuarioType)
+    codigo_entrega = graphene.String()
+    conversation_id = graphene.Int()
+    candidates = graphene.List(lambda: ServiceRequestCandidateType)
+
+    class Meta:
+        model = ServiceRequest
+        fields = (
+            "id",
+            "tipo",
+            "cliente",
+            "driver",
+            "store_order",
+            "pickup_direccion",
+            "pickup_lat",
+            "pickup_lng",
+            "dropoff_direccion",
+            "dropoff_lat",
+            "dropoff_lng",
+            "estado",
+            "distancia_metros",
+            "duracion_segundos",
+            "costo_estimado",
+            "pago_delivery",
+            "ruta_geojson",
+            "notas",
+            "asignado_en",
+            "completado_en",
+            "cancelado_en",
+            "creado",
+            "actualizado",
+        )
+
+    def resolve_cliente(self, info):
+        return self.cliente_id
+
+    def resolve_driver(self, info):
+        return self.driver_id if self.driver_id else None
+
+    def resolve_mi_candidatura_estado(self, info):
+        user = info.context.user
+        if not user or not user.is_authenticated or not getattr(user, 'es_conductor', False):
+            return None
+        return self.candidates.filter(driver=user).values_list('estado', flat=True).first()
+
+    def resolve_store_order(self, info):
+        return self.store_order
+
+    def resolve_ruta_geojson(self, info):
+        return self.ruta_geojson
+
+    def resolve_cliente_detalle(self, info):
+        return self.cliente
+
+    def resolve_driver_detalle(self, info):
+        return self.driver
+
+    def resolve_codigo_entrega(self, info):
+        # Solo quien solicita el servicio ve el código de recogida;
+        # el conductor lo valida, pero nunca puede leerlo desde la API.
+        user = info.context.user
+        if user and user.is_authenticated and user.id == self.usuario_codigo_recogida.id:
+            return self.codigo_entrega
+        return None
+
+    def resolve_conversation_id(self, info):
+        if not self.driver_id:
+            return None
+        conversacion, _ = Conversation.get_or_create_between(self.cliente, self.driver)
+        return conversacion.id
+
+    def resolve_candidates(self, info):
+        user = info.context.user
+        if not user or not user.is_authenticated or user.id != self.cliente_id:
+            return []
+        return self.candidates.select_related('driver', 'driver__perfil_conductor').filter(
+            estado=ServiceRequestCandidate.ESTADO_POSTULADO
+        )
+
+
+class ServiceRequestCandidateType(DjangoObjectType):
+    driver = graphene.Int()
+    driver_detalle = graphene.Field(UsuarioType)
+    driver_profile = graphene.Field(DriverProfileType)
+
+    class Meta:
+        model = ServiceRequestCandidate
+        fields = ('id', 'driver', 'estado', 'creado', 'actualizado')
+
+    def resolve_driver(self, info):
+        return self.driver_id
+
+    def resolve_driver_detalle(self, info):
+        return self.driver
+
+    def resolve_driver_profile(self, info):
+        try:
+            return self.driver.perfil_conductor
+        except DriverProfile.DoesNotExist:
+            return None

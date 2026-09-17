@@ -1,16 +1,22 @@
 from decimal import Decimal
 
-from django.db import models
 from django.contrib.auth.models import AbstractUser
+from django.core.validators import MaxValueValidator, MinValueValidator
+from django.db import models
+from django.utils import timezone
+from django.utils.crypto import get_random_string
+
 
 class Usuario(AbstractUser):
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = ['username'] 
     ES_TIENDA = 'TIENDA'
     ES_CLIENTE = 'CLIENTE'
+    ES_CONDUCTOR = 'CONDUCTOR'
     ROLES = [
         (ES_TIENDA, 'Tienda'),
         (ES_CLIENTE, 'Cliente'),
+        (ES_CONDUCTOR, 'Conductor'),
     ]
 
     GENERO_MASCULINO = 'M'
@@ -29,21 +35,333 @@ class Usuario(AbstractUser):
     cedula_pasaporte = models.CharField(max_length=20, unique=True, blank=True, null=True)
     foto_identificacion = models.ImageField(upload_to='identificaciones/', blank=True, null=True)
     ingresos_minimos_mensuales = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
+    es_conductor = models.BooleanField(default=False)
+    avatar = models.ImageField(upload_to='avatars/', blank=True, null=True)
+    # False para usuarios creados vía Google que aún no completan el formulario de registro.
+    registro_completo = models.BooleanField(default=True)
 
     def __str__(self):
         return f"{self.username} ({self.rol})"
 
+
+class DriverProfile(models.Model):
+    ESTADO_OFFLINE = 'offline'
+    ESTADO_DISPONIBLE = 'available'
+    ESTADO_EN_VIAJE = 'on_trip'
+    ESTADOS = [
+        (ESTADO_OFFLINE, 'Fuera de línea'),
+        (ESTADO_DISPONIBLE, 'Disponible'),
+        (ESTADO_EN_VIAJE, 'En viaje'),
+    ]
+
+    VEHICULO_AUTO = 'auto'
+    VEHICULO_MOTO = 'moto'
+    VEHICULO_BICI = 'bici'
+    TIPOS_VEHICULO = [
+        (VEHICULO_AUTO, 'Auto'),
+        (VEHICULO_MOTO, 'Moto'),
+        (VEHICULO_BICI, 'Bicicleta'),
+    ]
+
+    usuario = models.OneToOneField(
+        Usuario,
+        on_delete=models.CASCADE,
+        related_name='perfil_conductor',
+    )
+    licencia_numero = models.CharField(max_length=64, blank=True, null=True)
+    vehiculo_tipo = models.CharField(max_length=20, choices=TIPOS_VEHICULO, blank=True, null=True)
+    vehiculo_placa = models.CharField(max_length=20, blank=True, null=True)
+    vehiculo_color = models.CharField(max_length=30, blank=True, null=True)
+    capacidad_paquetes = models.PositiveSmallIntegerField(
+        default=1,
+        help_text='Capacidad de paquetes o pasajeros permitidos.',
+    )
+    estado = models.CharField(
+        max_length=20,
+        choices=ESTADOS,
+        default=ESTADO_OFFLINE,
+    )
+    ubicacion_lat = models.DecimalField(
+        max_digits=9,
+        decimal_places=6,
+        blank=True,
+        null=True,
+    )
+    ubicacion_lng = models.DecimalField(
+        max_digits=9,
+        decimal_places=6,
+        blank=True,
+        null=True,
+    )
+    cedula_foto_frente = models.ImageField(
+        upload_to='conductores/cedulas/', blank=True, null=True
+    )
+    cedula_foto_reverso = models.ImageField(
+        upload_to='conductores/cedulas/', blank=True, null=True
+    )
+    licencia_foto = models.ImageField(
+        upload_to='conductores/licencias/', blank=True, null=True
+    )
+    actualizado = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Conductor {self.usuario.email} ({self.estado})"
+
+    @property
+    def is_complete(self) -> bool:
+        usuario = self.usuario
+        required = (
+            self.licencia_numero,
+            self.vehiculo_tipo,
+            self.vehiculo_placa,
+            self.vehiculo_color,
+            usuario.telefono,
+            usuario.cedula_pasaporte,
+        )
+        campos_ok = all(value not in (None, "") for value in required)
+        fotos_ok = bool(
+            self.cedula_foto_frente and self.cedula_foto_reverso and self.licencia_foto
+        )
+        return campos_ok and fotos_ok
+
+
+class Lugar(models.Model):
+    CATEGORIA_HOSPITAL = 'hospital'
+    CATEGORIA_CLINICA = 'clinica'
+    CATEGORIA_CENTRO_COMERCIAL = 'centro_comercial'
+    CATEGORIA_MERCADO = 'mercado'
+    CATEGORIA_LOCAL = 'local'
+    CATEGORIA_OTRO = 'otro'
+    CATEGORIAS = [
+        (CATEGORIA_HOSPITAL, 'Hospital'),
+        (CATEGORIA_CLINICA, 'Clínica'),
+        (CATEGORIA_CENTRO_COMERCIAL, 'Centro comercial'),
+        (CATEGORIA_MERCADO, 'Mercado'),
+        (CATEGORIA_LOCAL, 'Local'),
+        (CATEGORIA_OTRO, 'Otro'),
+    ]
+
+    nombre = models.CharField(max_length=160)
+    alias = models.TextField(
+        blank=True,
+        default='',
+        help_text='Nombres alternativos separados por coma para mejorar la búsqueda.',
+    )
+    categoria = models.CharField(
+        max_length=30,
+        choices=CATEGORIAS,
+        default=CATEGORIA_OTRO,
+    )
+    direccion = models.CharField(max_length=255, blank=True, default='')
+    lat = models.DecimalField(max_digits=9, decimal_places=6)
+    lng = models.DecimalField(max_digits=9, decimal_places=6)
+    activo = models.BooleanField(default=True)
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['nombre']
+        indexes = [
+            models.Index(fields=['activo', 'categoria'], name='store_lugar_activo_cat_idx'),
+        ]
+
+    def __str__(self):
+        return f'{self.nombre} ({self.get_categoria_display()})'
+
+
 class Tienda(models.Model):
     usuario = models.OneToOneField(Usuario, on_delete=models.CASCADE, limit_choices_to={'rol': Usuario.ES_TIENDA})
     nombre = models.CharField(max_length=200)
+    descripcion = models.TextField(
+        blank=True, null=True,
+        help_text='Descripción pública de la tienda, visible en su perfil.',
+    )
     direccion = models.TextField(blank=True, null=True)
     telefono = models.CharField(max_length=15, blank=True, null=True)
     logo = models.ImageField(upload_to='logos/', blank=True, null=True)
+    banner = models.ImageField(
+        upload_to='banners/', blank=True, null=True,
+        help_text='Imagen de portada del perfil público de la tienda.',
+    )
     informacion_fiscal = models.TextField(blank=True, null=True)
+    ubicacion_lat = models.DecimalField(
+        max_digits=9, decimal_places=6, null=True, blank=True,
+    )
+    ubicacion_lng = models.DecimalField(
+        max_digits=9, decimal_places=6, null=True, blank=True,
+    )
+    ubicacion_actualizada = models.DateTimeField(null=True, blank=True)
+    pago_movil_banco = models.CharField(max_length=60, blank=True, null=True)
+    pago_movil_telefono = models.CharField(max_length=15, blank=True, null=True)
+    pago_movil_cedula = models.CharField(max_length=20, blank=True, null=True)
+    verificada = models.BooleanField(
+        default=False,
+        help_text='Marcada manualmente por el administrador. Muestra el sello "Verificada" en la app.',
+    )
     creado = models.DateTimeField(auto_now_add=True)
+
+    @property
+    def pago_movil_configurado(self) -> bool:
+        return bool(self.pago_movil_banco and self.pago_movil_telefono and self.pago_movil_cedula)
+
+    def save(self, *args, **kwargs):
+        nombre_anterior = None
+        if self.pk:
+            nombre_anterior = type(self).objects.filter(pk=self.pk).values_list(
+                'nombre', flat=True
+            ).first()
+        super().save(*args, **kwargs)
+        if nombre_anterior != self.nombre:
+            TiendaNombreHistorial.objects.create(tienda=self, nombre=self.nombre)
 
     def __str__(self):
         return self.nombre
+
+
+class TiendaNombreHistorial(models.Model):
+    tienda = models.ForeignKey(
+        Tienda,
+        on_delete=models.CASCADE,
+        related_name='historial_nombres',
+    )
+    nombre = models.CharField(max_length=200)
+    creado = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-creado']
+        indexes = [
+            models.Index(fields=['tienda', '-creado'], name='store_tienda_nombre_hist_idx'),
+        ]
+
+    def __str__(self):
+        return f'{self.tienda_id}: {self.nombre}'
+
+
+class Negocio(models.Model):
+    """Identidad administrativa de una tienda dentro del futuro módulo empresarial.
+
+    ``Tienda`` continúa siendo la entidad pública del marketplace. ``Negocio`` será
+    el propietario lógico de ventas internas, inventario, caja y demás módulos
+    administrativos, permitiendo agregar miembros y sucursales sin convertir a cada
+    vendedor ocasional en una tienda.
+    """
+
+    tienda = models.OneToOneField(
+        Tienda,
+        on_delete=models.CASCADE,
+        related_name='negocio',
+    )
+    nombre_legal = models.CharField(max_length=200, blank=True, default='')
+    activo = models.BooleanField(default=True)
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.nombre_legal or self.tienda.nombre
+
+
+class NegocioMiembro(models.Model):
+    """Usuario autorizado a operar el módulo administrativo de un negocio."""
+
+    ROL_PROPIETARIO = 'owner'
+    ROL_ADMINISTRADOR = 'admin'
+    ROLES = [
+        (ROL_PROPIETARIO, 'Propietario'),
+        (ROL_ADMINISTRADOR, 'Administrador'),
+    ]
+
+    negocio = models.ForeignKey(
+        Negocio,
+        on_delete=models.CASCADE,
+        related_name='miembros',
+    )
+    usuario = models.ForeignKey(
+        Usuario,
+        on_delete=models.CASCADE,
+        related_name='membresias_negocio',
+    )
+    rol = models.CharField(max_length=20, choices=ROLES, default=ROL_ADMINISTRADOR)
+    activo = models.BooleanField(default=True)
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['negocio', 'usuario'],
+                name='unique_miembro_por_negocio',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['usuario', 'activo'], name='store_member_user_active_idx'),
+        ]
+
+    def __str__(self):
+        return f'{self.usuario.email} en {self.negocio}'
+
+
+class Sucursal(models.Model):
+    """Ubicación operativa de un negocio."""
+
+    negocio = models.ForeignKey(
+        Negocio,
+        on_delete=models.CASCADE,
+        related_name='sucursales',
+    )
+    nombre = models.CharField(max_length=120)
+    codigo = models.CharField(max_length=30)
+    direccion = models.TextField(blank=True, default='')
+    activo = models.BooleanField(default=True)
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['negocio', 'codigo'],
+                name='unique_codigo_sucursal_por_negocio',
+            ),
+        ]
+        ordering = ['nombre', 'id']
+
+    def __str__(self):
+        return f'{self.negocio}: {self.nombre}'
+
+
+class Almacen(models.Model):
+    """Lugar de inventario dentro de una sucursal."""
+
+    sucursal = models.ForeignKey(
+        Sucursal,
+        on_delete=models.CASCADE,
+        related_name='almacenes',
+    )
+    nombre = models.CharField(max_length=120)
+    codigo = models.CharField(max_length=30)
+    activo = models.BooleanField(default=True)
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['sucursal', 'codigo'],
+                name='unique_codigo_almacen_por_sucursal',
+            ),
+        ]
+        ordering = ['nombre', 'id']
+
+    def __str__(self):
+        return f'{self.sucursal}: {self.nombre}'
+
+
+MONEDA_USD = 'USD'
+MONEDA_VES = 'VES'
+MONEDAS = [
+    (MONEDA_USD, 'Dólares (USD)'),
+    (MONEDA_VES, 'Bolívares (VES)'),
+]
+
 
 class ProductoTienda(models.Model):
     TIPO_PRODUCTO = 'PRODUCTO'
@@ -57,12 +375,121 @@ class ProductoTienda(models.Model):
     nombre = models.CharField(max_length=200)
     descripcion = models.TextField()
     precio = models.DecimalField(max_digits=10, decimal_places=2)
+    moneda = models.CharField(max_length=3, choices=MONEDAS, default=MONEDA_USD)
     stock = models.PositiveIntegerField(blank=True, null=True)
     tipo = models.CharField(max_length=15, choices=TIPOS, default=TIPO_PRODUCTO)
     imagen = models.ImageField(upload_to='productos_tienda/', blank=True, null=True)
+    imagen_2 = models.ImageField(upload_to='productos_tienda/', blank=True, null=True)
+    imagen_3 = models.ImageField(upload_to='productos_tienda/', blank=True, null=True)
+    permite_encargo = models.BooleanField(
+        default=False,
+        help_text='Permite recibir pedidos aunque el stock disponible sea insuficiente (venta por encargo).',
+    )
+    categoria = models.ForeignKey('Categoria', on_delete=models.SET_NULL, null=True, blank=True, related_name='productos_tienda')
+    costo_unitario = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text='Costo de adquisición, para cálculo de margen (visible solo para la tienda).',
+    )
+    codigo_barras = models.CharField(max_length=64, null=True, blank=True, db_index=True)
+    destacado = models.BooleanField(
+        default=False,
+        help_text='Producto estrella: se muestra primero en el catálogo público de la tienda.',
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['tienda', 'codigo_barras'],
+                condition=models.Q(codigo_barras__isnull=False),
+                name='unique_codigo_barras_por_tienda',
+            ),
+        ]
+        ordering = ['-destacado', '-id']
 
     def __str__(self):
         return f"{self.nombre} - {self.tienda.nombre} ({self.tipo})"
+
+
+class InventarioAlmacen(models.Model):
+    """Existencia de un producto dentro de un almacén concreto.
+
+    ``ProductoTienda.stock`` se conserva como total agregado para no romper
+    clientes antiguos. Esta tabla es la fuente de detalle cuando el negocio
+    trabaja con sucursales y almacenes.
+    """
+
+    almacen = models.ForeignKey(
+        Almacen,
+        on_delete=models.CASCADE,
+        related_name='existencias',
+    )
+    producto = models.ForeignKey(
+        ProductoTienda,
+        on_delete=models.CASCADE,
+        related_name='existencias_almacen',
+    )
+    cantidad = models.PositiveIntegerField(default=0)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['almacen', 'producto'],
+                name='unique_existencia_producto_almacen',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['producto', 'almacen'], name='store_inv_product_wh_idx'),
+            models.Index(fields=['almacen', 'producto'], name='store_inv_wh_product_idx'),
+        ]
+
+    def __str__(self):
+        return f'{self.producto.nombre} · {self.almacen.nombre}: {self.cantidad}'
+
+
+class TransferenciaInventario(models.Model):
+    """Movimiento de existencias entre dos almacenes del mismo negocio."""
+
+    producto = models.ForeignKey(
+        ProductoTienda,
+        on_delete=models.CASCADE,
+        related_name='transferencias_inventario',
+    )
+    almacen_origen = models.ForeignKey(
+        Almacen,
+        on_delete=models.PROTECT,
+        related_name='transferencias_salida',
+    )
+    almacen_destino = models.ForeignKey(
+        Almacen,
+        on_delete=models.PROTECT,
+        related_name='transferencias_entrada',
+    )
+    cantidad = models.PositiveIntegerField()
+    creado_por = models.ForeignKey(
+        Usuario,
+        on_delete=models.PROTECT,
+        related_name='transferencias_inventario_creadas',
+    )
+    notas = models.TextField(blank=True, default='')
+    creado = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-creado', '-id']
+        indexes = [
+            models.Index(fields=['producto', '-creado'], name='store_transfer_product_idx'),
+            models.Index(fields=['almacen_origen', '-creado'], name='store_transfer_origin_idx'),
+            models.Index(fields=['almacen_destino', '-creado'], name='store_transfer_dest_idx'),
+        ]
+
+    def __str__(self):
+        return (
+            f'Transferencia #{self.id}: {self.producto.nombre} '
+            f'{self.almacen_origen.nombre} → {self.almacen_destino.nombre}'
+        )
 
 
 class StoreOrder(models.Model):
@@ -83,7 +510,22 @@ class StoreOrder(models.Model):
     cantidad = models.PositiveIntegerField(default=1)
     precio_unitario = models.DecimalField(max_digits=10, decimal_places=2)
     total = models.DecimalField(max_digits=12, decimal_places=2)
+    moneda = models.CharField(max_length=3, choices=MONEDAS, default=MONEDA_USD)
+    tasa_aplicada = models.DecimalField(
+        max_digits=12,
+        decimal_places=4,
+        blank=True,
+        null=True,
+        help_text='Tasa USD→VES vigente al crear la orden (snapshot).',
+    )
     estado = models.CharField(max_length=20, choices=ESTADOS, default=ESTADO_PENDIENTE)
+    CANAL_ONLINE = 'online'
+    CANAL_PRESENCIAL = 'presencial'
+    CANALES = [
+        (CANAL_ONLINE, 'En línea'),
+        (CANAL_PRESENCIAL, 'Presencial'),
+    ]
+    canal = models.CharField(max_length=15, choices=CANALES, default=CANAL_ONLINE)
     direccion_entrega = models.CharField(max_length=255, blank=True, null=True)
     notas = models.TextField(blank=True, null=True)
     creado = models.DateTimeField(auto_now_add=True)
@@ -95,6 +537,569 @@ class StoreOrder(models.Model):
     def __str__(self):
         return f"Orden #{self.id} - {self.usuario.email} -> {self.producto.nombre}"
 
+
+class OperacionVentaPresencial(models.Model):
+    # Registro independiente: la respuesta confirmada sobrevive a cambios posteriores
+    # del catálogo. Sin relaciones inversas que alteren consultas del sistema legado.
+    tienda_id = models.PositiveBigIntegerField()
+    clave = models.UUIDField()
+    huella = models.CharField(max_length=64, blank=True, default='')
+    respuesta = models.JSONField(null=True, blank=True)
+    cancelada = models.BooleanField(default=False)
+    creado = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(
+            fields=['tienda_id', 'clave'], name='unique_operacion_venta_tienda',
+        )]
+
+
+class SesionCaja(models.Model):
+    tienda_id = models.PositiveBigIntegerField()
+    almacen_id = models.PositiveBigIntegerField()
+    almacen_nombre = models.CharField(max_length=120)
+    sucursal_nombre = models.CharField(max_length=120)
+    abierta = models.BooleanField(default=True)
+    fondo_usd = models.DecimalField(max_digits=20, decimal_places=2, default=0)
+    fondo_ves = models.DecimalField(max_digits=20, decimal_places=2, default=0)
+    contado_usd = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True)
+    contado_ves = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True)
+    esperado_usd = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True)
+    esperado_ves = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True)
+    abierto_por = models.PositiveBigIntegerField()
+    cerrado_por = models.PositiveBigIntegerField(null=True, blank=True)
+    notas_cierre = models.TextField(blank=True, default='')
+    abierto = models.DateTimeField(auto_now_add=True)
+    cerrado = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-id']
+        constraints = [models.UniqueConstraint(
+            fields=['tienda_id', 'almacen_id'], condition=models.Q(abierta=True),
+            name='unique_caja_abierta_almacen',
+        )]
+        indexes = [models.Index(fields=['tienda_id', '-id'], name='store_caja_tienda_idx')]
+
+
+class MovimientoCaja(models.Model):
+    MEDIOS = [('efectivo', 'Efectivo'), ('pago_movil', 'Pago móvil'), ('zelle', 'Zelle'),
+              ('tarjeta', 'Tarjeta'), ('transferencia', 'Transferencia')]
+    sesion = models.ForeignKey(SesionCaja, on_delete=models.PROTECT, related_name='movimientos')
+    tipo = models.CharField(max_length=10, choices=[('venta', 'Venta'), ('entrada', 'Entrada'), ('retiro', 'Retiro')])
+    moneda = models.CharField(max_length=3, choices=MONEDAS)
+    monto = models.DecimalField(max_digits=20, decimal_places=2)
+    medio_pago = models.CharField(max_length=20, choices=MEDIOS, default='efectivo')
+    motivo = models.TextField(blank=True, default='')
+    usuario_id = models.PositiveBigIntegerField()
+    order_id = models.PositiveBigIntegerField(unique=True, null=True, blank=True)
+    creado = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-id']
+
+
+class OperacionCaja(models.Model):
+    tienda_id = models.PositiveBigIntegerField()
+    clave = models.UUIDField()
+    huella = models.CharField(max_length=64, blank=True, default='')
+    respuesta = models.JSONField(null=True, blank=True)
+    cancelada = models.BooleanField(default=False)
+    creado = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['tienda_id', 'clave'], name='unique_operacion_caja_tienda')]
+
+
+class CuentaPorCobrar(models.Model):
+    """Crédito comercial a un cliente, denominado en USD (moneda funcional del negocio).
+
+    El saldo se liquida en bolívares a la tasa vigente al momento del abono; el
+    diferencial entre la tasa de emisión y la de liquidación se registra en cada
+    abono como ganancia o pérdida cambiaria realizada, sin alterar el saldo en USD.
+    """
+
+    ESTADO_PENDIENTE = 'pendiente'
+    ESTADO_PARCIAL = 'parcial'
+    ESTADO_PAGADA = 'pagada'
+    ESTADO_ANULADA = 'anulada'
+    ESTADOS = [
+        (ESTADO_PENDIENTE, 'Pendiente'),
+        (ESTADO_PARCIAL, 'Abonada parcialmente'),
+        (ESTADO_PAGADA, 'Pagada'),
+        (ESTADO_ANULADA, 'Anulada'),
+    ]
+
+    tienda_id = models.PositiveBigIntegerField()
+    cliente_nombre = models.CharField(max_length=200)
+    cliente_telefono = models.CharField(max_length=20, blank=True, default='')
+    order_id = models.PositiveBigIntegerField(null=True, blank=True)
+    monto_usd = models.DecimalField(max_digits=14, decimal_places=2)
+    saldo_usd = models.DecimalField(max_digits=14, decimal_places=2)
+    tasa_emision = models.DecimalField(max_digits=12, decimal_places=4)
+    estado = models.CharField(max_length=15, choices=ESTADOS, default=ESTADO_PENDIENTE)
+    vencimiento = models.DateField(null=True, blank=True)
+    notas = models.TextField(blank=True, default='')
+    creado_por = models.PositiveBigIntegerField()
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-creado']
+        indexes = [
+            models.Index(fields=['tienda_id', 'estado'], name='store_cxc_tienda_estado_idx'),
+            models.Index(fields=['tienda_id', 'vencimiento'], name='store_cxc_tienda_venc_idx'),
+        ]
+
+    def __str__(self):
+        return f'CxC #{self.pk}: {self.cliente_nombre} (USD {self.saldo_usd})'
+
+
+class AbonoCuentaPorCobrar(models.Model):
+    """Pago que liquida total o parcialmente una CuentaPorCobrar."""
+
+    MEDIOS = [('efectivo', 'Efectivo'), ('pago_movil', 'Pago móvil'), ('zelle', 'Zelle'),
+              ('tarjeta', 'Tarjeta'), ('transferencia', 'Transferencia')]
+
+    cuenta = models.ForeignKey(CuentaPorCobrar, on_delete=models.PROTECT, related_name='abonos')
+    monto_usd = models.DecimalField(max_digits=14, decimal_places=2)
+    tasa_liquidacion = models.DecimalField(max_digits=12, decimal_places=4)
+    monto_ves_equivalente = models.DecimalField(max_digits=16, decimal_places=2)
+    diferencial_cambiario_ves = models.DecimalField(max_digits=16, decimal_places=2)
+    medio_pago = models.CharField(max_length=20, choices=MEDIOS, default='efectivo')
+    registrado_por = models.PositiveBigIntegerField()
+    creado = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-creado']
+
+    def __str__(self):
+        return f'Abono #{self.pk} a CxC #{self.cuenta_id}: USD {self.monto_usd}'
+
+
+class OperacionCuentaPorCobrar(models.Model):
+    tienda_id = models.PositiveBigIntegerField()
+    clave = models.UUIDField()
+    huella = models.CharField(max_length=64, blank=True, default='')
+    respuesta = models.JSONField(null=True, blank=True)
+    cancelada = models.BooleanField(default=False)
+    creado = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['tienda_id', 'clave'], name='unique_operacion_cxc_tienda')]
+
+
+class CuentaPorPagar(models.Model):
+    """Deuda comercial con un proveedor, denominada en USD (moneda funcional del negocio).
+
+    Simétrica a ``CuentaPorCobrar``: el saldo se liquida en bolívares a la tasa
+    vigente al momento del abono. El diferencial cambiario tiene signo invertido
+    respecto a una cuenta por cobrar: si la tasa sube entre la emisión y el pago,
+    liquidar la misma deuda en USD cuesta más bolívares, lo que es una pérdida
+    cambiaria para el negocio (no una ganancia, como en una cuenta por cobrar).
+    """
+
+    ESTADO_PENDIENTE = 'pendiente'
+    ESTADO_PARCIAL = 'parcial'
+    ESTADO_PAGADA = 'pagada'
+    ESTADO_ANULADA = 'anulada'
+    ESTADOS = [
+        (ESTADO_PENDIENTE, 'Pendiente'),
+        (ESTADO_PARCIAL, 'Abonada parcialmente'),
+        (ESTADO_PAGADA, 'Pagada'),
+        (ESTADO_ANULADA, 'Anulada'),
+    ]
+
+    tienda_id = models.PositiveBigIntegerField()
+    proveedor_nombre = models.CharField(max_length=200)
+    proveedor_telefono = models.CharField(max_length=20, blank=True, default='')
+    monto_usd = models.DecimalField(max_digits=14, decimal_places=2)
+    saldo_usd = models.DecimalField(max_digits=14, decimal_places=2)
+    tasa_emision = models.DecimalField(max_digits=12, decimal_places=4)
+    estado = models.CharField(max_length=15, choices=ESTADOS, default=ESTADO_PENDIENTE)
+    vencimiento = models.DateField(null=True, blank=True)
+    notas = models.TextField(blank=True, default='')
+    creado_por = models.PositiveBigIntegerField()
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-creado']
+        indexes = [
+            models.Index(fields=['tienda_id', 'estado'], name='store_cxp_tienda_estado_idx'),
+            models.Index(fields=['tienda_id', 'vencimiento'], name='store_cxp_tienda_venc_idx'),
+        ]
+
+    def __str__(self):
+        return f'CxP #{self.pk}: {self.proveedor_nombre} (USD {self.saldo_usd})'
+
+
+class AbonoCuentaPorPagar(models.Model):
+    """Pago que liquida total o parcialmente una CuentaPorPagar."""
+
+    MEDIOS = [('efectivo', 'Efectivo'), ('pago_movil', 'Pago móvil'), ('zelle', 'Zelle'),
+              ('tarjeta', 'Tarjeta'), ('transferencia', 'Transferencia')]
+
+    cuenta = models.ForeignKey(CuentaPorPagar, on_delete=models.PROTECT, related_name='abonos')
+    monto_usd = models.DecimalField(max_digits=14, decimal_places=2)
+    tasa_liquidacion = models.DecimalField(max_digits=12, decimal_places=4)
+    monto_ves_equivalente = models.DecimalField(max_digits=16, decimal_places=2)
+    diferencial_cambiario_ves = models.DecimalField(max_digits=16, decimal_places=2)
+    medio_pago = models.CharField(max_length=20, choices=MEDIOS, default='efectivo')
+    registrado_por = models.PositiveBigIntegerField()
+    creado = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-creado']
+
+    def __str__(self):
+        return f'Abono #{self.pk} a CxP #{self.cuenta_id}: USD {self.monto_usd}'
+
+
+class OperacionCuentaPorPagar(models.Model):
+    tienda_id = models.PositiveBigIntegerField()
+    clave = models.UUIDField()
+    huella = models.CharField(max_length=64, blank=True, default='')
+    respuesta = models.JSONField(null=True, blank=True)
+    cancelada = models.BooleanField(default=False)
+    creado = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['tienda_id', 'clave'], name='unique_operacion_cxp_tienda')]
+
+
+class Gasto(models.Model):
+    """Egreso operativo del negocio, clasificado por tipo y sucursal.
+
+    No forma parte de un libro mayor: es un registro plano para reportes de
+    rentabilidad. Un gasto anulado se conserva (no se borra) para auditoría.
+    """
+
+    TIPO_FIJO = 'fijo'
+    TIPO_VARIABLE = 'variable'
+    TIPOS = [
+        (TIPO_FIJO, 'Fijo'),
+        (TIPO_VARIABLE, 'Variable'),
+    ]
+
+    tienda_id = models.PositiveBigIntegerField()
+    sucursal_id = models.PositiveBigIntegerField(null=True, blank=True)
+    tipo = models.CharField(max_length=10, choices=TIPOS)
+    categoria = models.CharField(max_length=100)
+    descripcion = models.TextField(blank=True, default='')
+    monto = models.DecimalField(max_digits=14, decimal_places=2)
+    moneda = models.CharField(max_length=3, choices=MONEDAS, default=MONEDA_USD)
+    tasa_aplicada = models.DecimalField(
+        max_digits=12, decimal_places=4, null=True, blank=True,
+        help_text='Tasa USD→VES vigente al registrar el gasto (snapshot).',
+    )
+    anulado = models.BooleanField(default=False)
+    notas = models.TextField(blank=True, default='')
+    registrado_por = models.PositiveBigIntegerField()
+    creado = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-creado']
+        indexes = [
+            models.Index(fields=['tienda_id', '-creado'], name='store_gasto_tienda_idx'),
+            models.Index(fields=['tienda_id', 'sucursal_id', '-creado'], name='store_gasto_sucursal_idx'),
+        ]
+
+    def __str__(self):
+        return f'Gasto #{self.pk}: {self.categoria} ({self.moneda} {self.monto})'
+
+
+class OperacionGasto(models.Model):
+    tienda_id = models.PositiveBigIntegerField()
+    clave = models.UUIDField()
+    huella = models.CharField(max_length=64, blank=True, default='')
+    respuesta = models.JSONField(null=True, blank=True)
+    cancelada = models.BooleanField(default=False)
+    creado = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['tienda_id', 'clave'], name='unique_operacion_gasto_tienda')]
+
+
+class StoreOrderItem(models.Model):
+    order = models.ForeignKey(StoreOrder, on_delete=models.CASCADE, related_name='items')
+    producto = models.ForeignKey(ProductoTienda, on_delete=models.CASCADE, related_name='order_items')
+    cantidad = models.PositiveIntegerField(default=1)
+    precio_unitario = models.DecimalField(max_digits=10, decimal_places=2)
+    subtotal = models.DecimalField(max_digits=12, decimal_places=2)
+
+    class Meta:
+        ordering = ['id']
+
+    def __str__(self):
+        return f"{self.cantidad} x {self.producto.nombre} (orden #{self.order_id})"
+
+
+class OrderPayment(models.Model):
+    METODO_PAGO_MOVIL = 'pago_movil'
+    METODO_EFECTIVO = 'efectivo'
+    METODO_ZELLE = 'zelle'
+    METODOS = [
+        (METODO_PAGO_MOVIL, 'Pago móvil'),
+        (METODO_EFECTIVO, 'Efectivo'),
+        (METODO_ZELLE, 'Zelle'),
+    ]
+
+    ESTADO_REPORTADO = 'reported'
+    ESTADO_CONFIRMADO = 'confirmed'
+    ESTADO_RECHAZADO = 'rejected'
+    ESTADOS = [
+        (ESTADO_REPORTADO, 'Reportado'),
+        (ESTADO_CONFIRMADO, 'Confirmado'),
+        (ESTADO_RECHAZADO, 'Rechazado'),
+    ]
+
+    order = models.ForeignKey(StoreOrder, on_delete=models.CASCADE, related_name='pagos')
+    metodo = models.CharField(max_length=15, choices=METODOS)
+    referencia = models.CharField(max_length=40, blank=True, null=True)
+    captura = models.ImageField(upload_to='pagos/', blank=True, null=True)
+    estado = models.CharField(max_length=15, choices=ESTADOS, default=ESTADO_REPORTADO)
+    motivo_rechazo = models.TextField(blank=True, null=True)
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-creado']
+
+    def __str__(self):
+        return f"Pago {self.metodo} orden #{self.order_id} ({self.estado})"
+
+
+class ServiceRequest(models.Model):
+    TIPO_TAXI = 'taxi'
+    TIPO_DELIVERY = 'delivery'
+    TIPOS = [
+        (TIPO_TAXI, 'Taxi'),
+        (TIPO_DELIVERY, 'Delivery'),
+    ]
+
+    PAGO_DESTINO = 'destination'
+    PAGO_TIENDA = 'store'
+    PAGOS_DELIVERY = [
+        (PAGO_DESTINO, 'Pago en destino'),
+        (PAGO_TIENDA, 'Lo paga la tienda'),
+    ]
+
+    ESTADO_PENDIENTE = 'pending'
+    ESTADO_ASIGNADO = 'assigned'
+    ESTADO_LLEGO_RECOGIDA = 'arrived_pickup'
+    ESTADO_EN_CURSO = 'in_progress'
+    ESTADO_LLEGO_DESTINO = 'arrived_dropoff'
+    ESTADO_COMPLETADO = 'completed'
+    ESTADO_CANCELADO = 'cancelled'
+    ESTADOS = [
+        (ESTADO_PENDIENTE, 'Pendiente'),
+        (ESTADO_ASIGNADO, 'Asignado'),
+        (ESTADO_LLEGO_RECOGIDA, 'Llegó al punto de recogida'),
+        (ESTADO_EN_CURSO, 'En curso'),
+        (ESTADO_LLEGO_DESTINO, 'Llegó al destino'),
+        (ESTADO_COMPLETADO, 'Completado'),
+        (ESTADO_CANCELADO, 'Cancelado'),
+    ]
+
+    tipo = models.CharField(max_length=20, choices=TIPOS)
+    cliente = models.ForeignKey(
+        Usuario,
+        on_delete=models.CASCADE,
+        related_name='solicitudes_cliente',
+    )
+    driver = models.ForeignKey(
+        Usuario,
+        on_delete=models.SET_NULL,
+        related_name='solicitudes_conductor',
+        blank=True,
+        null=True,
+        limit_choices_to={'es_conductor': True},
+    )
+    store_order = models.ForeignKey(
+        StoreOrder,
+        on_delete=models.SET_NULL,
+        related_name='service_requests',
+        blank=True,
+        null=True,
+    )
+    pickup_direccion = models.CharField(max_length=255, blank=True, null=True)
+    pickup_lat = models.DecimalField(max_digits=9, decimal_places=6, blank=True, null=True)
+    pickup_lng = models.DecimalField(max_digits=9, decimal_places=6, blank=True, null=True)
+    dropoff_direccion = models.CharField(max_length=255, blank=True, null=True)
+    dropoff_lat = models.DecimalField(max_digits=9, decimal_places=6, blank=True, null=True)
+    dropoff_lng = models.DecimalField(max_digits=9, decimal_places=6, blank=True, null=True)
+    estado = models.CharField(
+        max_length=20,
+        choices=ESTADOS,
+        default=ESTADO_PENDIENTE,
+    )
+    distancia_metros = models.PositiveIntegerField(blank=True, null=True)
+    duracion_segundos = models.PositiveIntegerField(blank=True, null=True)
+    costo_estimado = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
+    pago_delivery = models.CharField(
+        max_length=20,
+        choices=PAGOS_DELIVERY,
+        default=PAGO_DESTINO,
+        help_text='Define quién asume el costo del delivery.',
+    )
+    ruta_geojson = models.JSONField(blank=True, null=True)
+    notas = models.TextField(blank=True, null=True)
+    codigo_entrega = models.CharField(max_length=6, blank=True, null=True, editable=False)
+    asignado_en = models.DateTimeField(blank=True, null=True)
+    completado_en = models.DateTimeField(blank=True, null=True)
+    cancelado_en = models.DateTimeField(blank=True, null=True)
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-creado']
+
+    @property
+    def usuario_codigo_recogida(self) -> Usuario:
+        """Quien solicita el servicio y valida la placa al recoger.
+
+        El código actual confirma la recogida: lo posee quien creó la solicitud.
+        En una orden de tienda, por tanto, lo posee la tienda y no el comprador.
+        """
+        return self.cliente
+
+    @property
+    def usuario_receptor(self) -> Usuario:
+        """Usuario que recibe el servicio o el pedido en el destino."""
+        if self.store_order and self.store_order.usuario_id != self.cliente_id:
+            return self.store_order.usuario
+        return self.cliente
+
+    def save(self, *args, **kwargs):
+        if not self.codigo_entrega:
+            self.codigo_entrega = get_random_string(6, '0123456789')
+            if 'update_fields' in kwargs and kwargs['update_fields'] is not None:
+                kwargs['update_fields'] = list(kwargs['update_fields']) + ['codigo_entrega']
+        super().save(*args, **kwargs)
+
+    def marcar_asignado(self, driver: Usuario | None = None):
+        self.driver = driver
+        self.estado = self.ESTADO_ASIGNADO
+        self.asignado_en = timezone.now()
+        self.save(update_fields=['driver', 'estado', 'asignado_en', 'actualizado'])
+
+    def marcar_completado(self):
+        self.estado = self.ESTADO_COMPLETADO
+        self.completado_en = timezone.now()
+        self.save(update_fields=['estado', 'completado_en', 'actualizado'])
+
+    def marcar_cancelado(self):
+        self.estado = self.ESTADO_CANCELADO
+        self.cancelado_en = timezone.now()
+        self.save(update_fields=['estado', 'cancelado_en', 'actualizado'])
+
+    def __str__(self):
+        return f"Servicio #{self.id} ({self.tipo}) - {self.estado}"
+
+
+class ServiceRequestCandidate(models.Model):
+    ESTADO_POSTULADO = 'applied'
+    ESTADO_RECHAZADO = 'rejected'
+    ESTADO_SELECCIONADO = 'selected'
+    ESTADOS = [
+        (ESTADO_POSTULADO, 'Postulado'),
+        (ESTADO_RECHAZADO, 'Rechazado'),
+        (ESTADO_SELECCIONADO, 'Seleccionado'),
+    ]
+
+    service_request = models.ForeignKey(
+        ServiceRequest,
+        on_delete=models.CASCADE,
+        related_name='candidates',
+    )
+    driver = models.ForeignKey(
+        Usuario,
+        on_delete=models.CASCADE,
+        related_name='service_request_candidates',
+        limit_choices_to={'es_conductor': True},
+    )
+    estado = models.CharField(max_length=20, choices=ESTADOS, default=ESTADO_POSTULADO)
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['creado']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['service_request', 'driver'],
+                name='unique_service_request_candidate',
+            ),
+        ]
+
+
+class StoreOrderReview(models.Model):
+    order = models.OneToOneField(
+        StoreOrder,
+        on_delete=models.CASCADE,
+        related_name='review',
+    )
+    producto = models.ForeignKey(
+        ProductoTienda,
+        on_delete=models.CASCADE,
+        related_name='reviews',
+    )
+    usuario = models.ForeignKey(
+        Usuario,
+        on_delete=models.CASCADE,
+        related_name='store_order_reviews',
+    )
+    rating = models.PositiveSmallIntegerField(
+        validators=[MinValueValidator(1), MaxValueValidator(5)],
+    )
+    ETIQUETAS_VALIDAS = [
+        'Pago puntual',
+        'Pago rápido',
+        'Confianza',
+        'Buena atención',
+        'Entrega rápida',
+        'Producto como se describe',
+    ]
+    etiquetas = models.JSONField(default=list, blank=True)
+    comentario = models.TextField(blank=True, null=True)
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-creado']
+
+    def __str__(self):
+        return f"Reseña #{self.id} - Orden {self.order_id} ({self.rating} estrellas)"
+
+
+class StoreOrderSellerReview(models.Model):
+    order = models.OneToOneField(
+        StoreOrder,
+        on_delete=models.CASCADE,
+        related_name='seller_review',
+    )
+    tienda = models.ForeignKey(
+        Tienda,
+        on_delete=models.CASCADE,
+        related_name='seller_reviews',
+    )
+    comprador = models.ForeignKey(
+        Usuario,
+        on_delete=models.CASCADE,
+        related_name='store_order_seller_reviews',
+    )
+    rating = models.PositiveSmallIntegerField(
+        validators=[MinValueValidator(1), MaxValueValidator(5)],
+    )
+    comentario = models.TextField(blank=True, null=True)
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-creado']
+
+    def __str__(self):
+        return f"Reseña vendedor #{self.id} - Orden {self.order_id}"
+
 class Carrito(models.Model):
     usuario = models.OneToOneField(Usuario, on_delete=models.CASCADE)
     creado = models.DateTimeField(auto_now_add=True)
@@ -104,15 +1109,15 @@ class Carrito(models.Model):
 
 class ItemCarrito(models.Model):
     carrito = models.ForeignKey(Carrito, on_delete=models.CASCADE, related_name='items')
-    producto = models.ForeignKey('Producto', on_delete=models.CASCADE)
+    producto_tienda = models.ForeignKey('ProductoTienda', on_delete=models.CASCADE, null=True, blank=True)
     cantidad = models.PositiveIntegerField(default=1)
 
     def __str__(self):
-        return f"{self.cantidad} x {self.producto.nombre}"
+        return f"{self.cantidad} x {self.producto_tienda.nombre}"
 
     @property
     def subtotal(self) -> Decimal:
-        return self.cantidad * self.producto.precio
+        return self.cantidad * self.producto_tienda.precio
 
 class Pedido(models.Model):
     usuario = models.ForeignKey(Usuario, on_delete=models.CASCADE)
@@ -125,9 +1130,69 @@ class Pedido(models.Model):
     def __str__(self):
         return f"Pedido {self.id} de {self.usuario.username}"
 
+
+class ProductoFavorito(models.Model):
+    usuario = models.ForeignKey(Usuario, on_delete=models.CASCADE, related_name='favoritos')
+    producto = models.ForeignKey(ProductoTienda, on_delete=models.CASCADE, related_name='favoritado_por')
+    creado = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('usuario', 'producto')
+        ordering = ['-creado']
+
+    def __str__(self):
+        return f"Favorito: {self.usuario.email} -> {self.producto.nombre}"
+
+
+class Notificacion(models.Model):
+    TIPO_FAVORITO = 'favorite'
+    TIPO_ORDEN = 'order'
+    TIPO_SERVICIO = 'service'
+    TIPO_MENSAJE = 'message'
+    TIPO_GENERAL = 'general'
+    TIPOS = [
+        (TIPO_FAVORITO, 'Favorito'),
+        (TIPO_ORDEN, 'Orden'),
+        (TIPO_SERVICIO, 'Servicio'),
+        (TIPO_MENSAJE, 'Mensaje'),
+        (TIPO_GENERAL, 'General'),
+    ]
+
+    usuario = models.ForeignKey(
+        Usuario,
+        on_delete=models.CASCADE,
+        related_name='notificaciones',
+    )
+    titulo = models.CharField(max_length=255)
+    mensaje = models.TextField(blank=True)
+    tipo = models.CharField(max_length=20, choices=TIPOS, default=TIPO_GENERAL)
+    data = models.JSONField(blank=True, null=True)
+    leido = models.BooleanField(default=False)
+    creado = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-creado']
+
+    def __str__(self):
+        return f"{self.usuario.email} - {self.titulo}"
+
 class Categoria(models.Model):
+    TIPO_PRODUCTO = 'PRODUCTO'
+    TIPO_SERVICIO = 'SERVICIO'
+    TIPOS = [
+        (TIPO_PRODUCTO, 'Producto'),
+        (TIPO_SERVICIO, 'Servicio'),
+    ]
+
     nombre = models.CharField(max_length=100)
     descripcion = models.TextField(blank=True, null=True)
+    tipo = models.CharField(max_length=15, choices=TIPOS, default=TIPO_PRODUCTO)
+    es_comida = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text='Indica si la categoría se muestra en la sección Comidas.',
+    )
+    thumbnail = models.ImageField(upload_to='categorias/', blank=True, null=True)
 
     def __str__(self):
         return self.nombre
@@ -181,3 +1246,321 @@ class Wallet(models.Model):
 
     def __str__(self):
         return f"Wallet de {self.usuario.username} - Saldo: {self.saldo}"
+
+
+class Conversation(models.Model):
+    """Conversación 1-a-1 entre dos usuarios (típicamente cliente <-> tienda).
+
+    Se asocia opcionalmente a un producto para dar contexto al chat iniciado
+    desde la ficha de producto.
+    """
+
+    participantes = models.ManyToManyField(
+        Usuario,
+        related_name='conversaciones',
+    )
+    producto = models.ForeignKey(
+        ProductoTienda,
+        on_delete=models.SET_NULL,
+        related_name='conversaciones',
+        blank=True,
+        null=True,
+    )
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-actualizado']
+
+    def __str__(self):
+        return f"Conversación #{self.id}"
+
+    @classmethod
+    def get_or_create_between(cls, user_a: Usuario, user_b: Usuario, producto: 'ProductoTienda | None' = None):
+        """Devuelve la conversación existente entre dos usuarios o crea una nueva.
+
+        Si se pasa producto, se prefiere una conversación que coincida con ese producto.
+        """
+        qs = cls.objects.filter(participantes=user_a).filter(participantes=user_b)
+        if producto is not None:
+            existente = qs.filter(producto=producto).first()
+            if existente:
+                return existente, False
+        existente = qs.filter(producto__isnull=True).first() if producto is None else qs.first()
+        if existente:
+            return existente, False
+        conversacion = cls.objects.create(producto=producto)
+        conversacion.participantes.set([user_a, user_b])
+        return conversacion, True
+
+
+class Message(models.Model):
+    conversation = models.ForeignKey(
+        Conversation,
+        on_delete=models.CASCADE,
+        related_name='mensajes',
+    )
+    autor = models.ForeignKey(
+        Usuario,
+        on_delete=models.CASCADE,
+        related_name='mensajes_enviados',
+    )
+    contenido = models.TextField()
+    adjunto = models.FileField(
+        upload_to='chat_adjuntos/',
+        blank=True,
+        null=True,
+    )
+    adjunto_nombre = models.CharField(max_length=255, blank=True, default='')
+    adjunto_tipo = models.CharField(max_length=100, blank=True, default='')
+    leido = models.BooleanField(default=False)
+    creado = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['creado']
+        indexes = [
+            models.Index(fields=['conversation', 'creado']),
+        ]
+
+    def __str__(self):
+        return f"Mensaje #{self.id} de {self.autor.email}"
+
+
+class TasaCambio(models.Model):
+    """Tasa de conversión USD→VES vigente en una fecha dada.
+
+    El sistema toma siempre el registro más reciente (`-creado`) como tasa activa.
+    Se registran manualmente por un admin/staff (ej. tasa BCV del día).
+    """
+
+    FUENTE_BCV = 'BCV'
+    FUENTE_PARALELO = 'PARALELO'
+    FUENTE_MANUAL = 'MANUAL'
+    FUENTES = [
+        (FUENTE_BCV, 'BCV'),
+        (FUENTE_PARALELO, 'Paralelo'),
+        (FUENTE_MANUAL, 'Manual'),
+    ]
+
+    valor_bs = models.DecimalField(
+        max_digits=12,
+        decimal_places=4,
+        help_text='Cuántos bolívares equivalen a 1 USD.',
+    )
+    fuente = models.CharField(max_length=15, choices=FUENTES, default=FUENTE_BCV)
+    registrado_por = models.ForeignKey(
+        Usuario,
+        on_delete=models.SET_NULL,
+        related_name='tasas_registradas',
+        blank=True,
+        null=True,
+    )
+    creado = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-creado']
+        indexes = [models.Index(fields=['-creado'])]
+
+    def __str__(self):
+        return f"1 USD = {self.valor_bs} VES ({self.fuente}, {self.creado:%Y-%m-%d %H:%M})"
+
+    @classmethod
+    def vigente(cls) -> 'TasaCambio | None':
+        return cls.objects.order_by('-creado').first()
+
+
+class ExpoPushToken(models.Model):
+    """Token de Expo Push Notifications asociado a un usuario y dispositivo."""
+
+    usuario = models.ForeignKey(
+        Usuario,
+        on_delete=models.CASCADE,
+        related_name='push_tokens',
+    )
+    token = models.CharField(max_length=255, unique=True)
+    plataforma = models.CharField(max_length=20, blank=True, null=True)
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"PushToken {self.usuario.email} ({self.token[:12]}…)"
+
+
+class PasswordResetCode(models.Model):
+    """Código OTP de 6 dígitos para recuperación de contraseña."""
+
+    usuario = models.ForeignKey(
+        Usuario,
+        on_delete=models.CASCADE,
+        related_name='password_reset_codes',
+    )
+    codigo = models.CharField(max_length=6)
+    creado = models.DateTimeField(auto_now_add=True)
+    usado = models.BooleanField(default=False)
+    intentos = models.PositiveSmallIntegerField(default=0)
+
+    VALIDEZ_MINUTOS = 15
+    MAX_INTENTOS = 5
+
+    class Meta:
+        ordering = ['-creado']
+
+    def esta_vigente(self) -> bool:
+        from datetime import timedelta
+        if self.usado or self.intentos >= self.MAX_INTENTOS:
+            return False
+        return timezone.now() <= self.creado + timedelta(minutes=self.VALIDEZ_MINUTOS)
+
+    def __str__(self):
+        return f"ResetCode {self.usuario.email} ({'usado' if self.usado else 'activo'})"
+
+
+class TarifaDelivery(models.Model):
+    """Tarifas del costo de delivery, editables desde el admin sin redeploy."""
+
+    tarifa_base = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('1.00'))
+    tarifa_por_km = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.50'))
+    costo_minimo = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('1.00'))
+    activa = models.BooleanField(default=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-actualizado']
+        verbose_name = 'Tarifa de delivery'
+        verbose_name_plural = 'Tarifas de delivery'
+
+    def __str__(self):
+        return f"Base ${self.tarifa_base} + ${self.tarifa_por_km}/km (mín. ${self.costo_minimo})"
+
+    @classmethod
+    def vigente(cls) -> 'TarifaDelivery':
+        return cls.objects.filter(activa=True).first() or cls()
+
+
+class Reporte(models.Model):
+    MOTIVO_PRODUCTO_ENGANOSO = 'producto_enganoso'
+    MOTIVO_ESTAFA = 'estafa'
+    MOTIVO_CONTENIDO_INAPROPIADO = 'contenido_inapropiado'
+    MOTIVO_SPAM = 'spam'
+    MOTIVO_OTRO = 'otro'
+    MOTIVOS = [
+        (MOTIVO_PRODUCTO_ENGANOSO, 'Producto o servicio engañoso'),
+        (MOTIVO_ESTAFA, 'Posible estafa o fraude'),
+        (MOTIVO_CONTENIDO_INAPROPIADO, 'Contenido inapropiado'),
+        (MOTIVO_SPAM, 'Spam o publicaciones repetidas'),
+        (MOTIVO_OTRO, 'Otro'),
+    ]
+
+    ESTADO_PENDIENTE = 'pendiente'
+    ESTADO_REVISADO = 'revisado'
+    ESTADOS = [
+        (ESTADO_PENDIENTE, 'Pendiente'),
+        (ESTADO_REVISADO, 'Revisado'),
+    ]
+
+    reportante = models.ForeignKey(Usuario, on_delete=models.CASCADE, related_name='reportes')
+    tienda = models.ForeignKey(Tienda, on_delete=models.CASCADE, null=True, blank=True, related_name='reportes')
+    producto = models.ForeignKey(ProductoTienda, on_delete=models.CASCADE, null=True, blank=True, related_name='reportes')
+    motivo = models.CharField(max_length=30, choices=MOTIVOS)
+    descripcion = models.TextField(blank=True)
+    estado = models.CharField(max_length=15, choices=ESTADOS, default=ESTADO_PENDIENTE)
+    creado = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-creado']
+
+    def __str__(self):
+        objetivo = self.producto or self.tienda
+        return f"Reporte #{self.id} ({self.get_motivo_display()}) -> {objetivo}"
+
+
+class MovimientoStock(models.Model):
+    TIPO_ENTRADA = 'entrada'
+    TIPO_VENTA = 'venta'
+    TIPO_AJUSTE = 'ajuste'
+    TIPO_TRANSFERENCIA = 'transferencia'
+    TIPOS = [
+        (TIPO_ENTRADA, 'Entrada'),
+        (TIPO_VENTA, 'Venta'),
+        (TIPO_AJUSTE, 'Ajuste'),
+        (TIPO_TRANSFERENCIA, 'Transferencia'),
+    ]
+
+    ORIGEN_VENTA_PRESENCIAL = 'venta_presencial'
+    ORIGEN_ORDEN_ONLINE = 'orden_online'
+    ORIGEN_AJUSTE_MANUAL = 'ajuste_manual'
+    ORIGEN_CREACION = 'creacion'
+    ORIGEN_TRANSFERENCIA = 'transferencia'
+    ORIGENES = [
+        (ORIGEN_VENTA_PRESENCIAL, 'Venta presencial'),
+        (ORIGEN_ORDEN_ONLINE, 'Orden en línea'),
+        (ORIGEN_AJUSTE_MANUAL, 'Ajuste manual'),
+        (ORIGEN_CREACION, 'Creación de producto'),
+        (ORIGEN_TRANSFERENCIA, 'Transferencia entre almacenes'),
+    ]
+
+    producto = models.ForeignKey(ProductoTienda, on_delete=models.CASCADE, related_name='movimientos_stock')
+    almacen = models.ForeignKey(
+        Almacen,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='movimientos_stock',
+    )
+    transferencia = models.ForeignKey(
+        'TransferenciaInventario',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='movimientos_stock',
+    )
+    tipo = models.CharField(max_length=15, choices=TIPOS)
+    cantidad = models.IntegerField(help_text='Delta con signo: las ventas son negativas.')
+    stock_resultante = models.PositiveIntegerField(null=True, blank=True)
+    stock_almacen_resultante = models.PositiveIntegerField(null=True, blank=True)
+    origen = models.CharField(max_length=20, choices=ORIGENES)
+    order = models.ForeignKey(StoreOrder, on_delete=models.SET_NULL, null=True, blank=True, related_name='movimientos_stock')
+    creado = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-creado']
+        indexes = [models.Index(fields=['producto', '-creado'], name='store_movim_product_idx')]
+
+    def __str__(self):
+        return f"{self.get_tipo_display()} {self.cantidad:+d} -> {self.producto.nombre} ({self.get_origen_display()})"
+
+
+class ArticuloUsado(models.Model):
+    MONEDA_USD = 'USD'
+    MONEDA_VES = 'VES'
+    MONEDAS = [
+        (MONEDA_USD, 'USD'),
+        (MONEDA_VES, 'VES'),
+    ]
+
+    ESTADO_COMO_NUEVO = 'como_nuevo'
+    ESTADO_BUEN_ESTADO = 'buen_estado'
+    ESTADO_CON_DETALLES = 'con_detalles'
+    ESTADOS_ARTICULO = [
+        (ESTADO_COMO_NUEVO, 'Como nuevo'),
+        (ESTADO_BUEN_ESTADO, 'Buen estado'),
+        (ESTADO_CON_DETALLES, 'Con detalles'),
+    ]
+
+    vendedor = models.ForeignKey(Usuario, on_delete=models.CASCADE, related_name='articulos_usados')
+    titulo = models.CharField(max_length=120)
+    descripcion = models.TextField()
+    precio = models.DecimalField(max_digits=10, decimal_places=2)
+    moneda = models.CharField(max_length=3, choices=MONEDAS, default=MONEDA_USD)
+    estado_articulo = models.CharField(max_length=15, choices=ESTADOS_ARTICULO)
+    imagen = models.ImageField(upload_to='articulos_usados/', null=True, blank=True)
+    imagen_2 = models.ImageField(upload_to='articulos_usados/', null=True, blank=True)
+    activo = models.BooleanField(default=True)
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-creado']
+
+    def __str__(self):
+        return f"{self.titulo} ({self.vendedor.username})"

@@ -9,8 +9,10 @@ https://docs.djangoproject.com/en/5.1/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.1/ref/settings/
 """
-from decouple import config
+from decouple import Csv, config
+from django.core.exceptions import ImproperlyConfigured
 import os
+from urllib.parse import unquote, urlparse
 
 
 from pathlib import Path
@@ -20,38 +22,112 @@ from datetime import timedelta
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
+def clean_env_list(values):
+    return [value.strip() for value in values if value and value.strip()]
+
+
+def first_env_value(*names, default=''):
+    for name in names:
+        value = config(name, default='')
+        if isinstance(value, str):
+            value = value.strip()
+        if value:
+            return value
+    return default
+
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-8a_h)l=(3^qv&ux^7mh#ckvfcy*1q0^55s3qmul*x25l8j*01+'
+# No usamos una clave insegura por defecto: si producción arranca sin la
+# variable, es preferible fallar al iniciar que firmar tokens con una clave
+# conocida.
+SECRET_KEY = config('DJANGO_SECRET_KEY', default='').strip()
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = config('DJANGO_DEBUG', default=False, cast=bool)
+if not SECRET_KEY:
+    if not DEBUG:
+        raise ImproperlyConfigured(
+            'DJANGO_SECRET_KEY es obligatorio cuando DJANGO_DEBUG=False.'
+        )
+    SECRET_KEY = 'django-insecure-local-development-only'
 
-ALLOWED_HOSTS = ['0.0.0.0', 'localhost', '127.0.0.1', "*"]
-#ALLOWED_HOSTS = ['*']
+default_allowed_hosts = ['0.0.0.0', 'localhost', '127.0.0.1'] if DEBUG else []
+ALLOWED_HOSTS = config(
+    'DJANGO_ALLOWED_HOSTS',
+    default=','.join(default_allowed_hosts),
+    cast=Csv(),
+)
+ALLOWED_HOSTS = clean_env_list(ALLOWED_HOSTS)
+
+railway_public_domain = config('RAILWAY_PUBLIC_DOMAIN', default='').strip()
+if railway_public_domain:
+    ALLOWED_HOSTS.append(railway_public_domain)
+
+if not DEBUG:
+    if not ALLOWED_HOSTS:
+        raise ImproperlyConfigured(
+            'Configura DJANGO_ALLOWED_HOSTS o RAILWAY_PUBLIC_DOMAIN en producción.'
+        )
+    if '*' in ALLOWED_HOSTS:
+        raise ImproperlyConfigured(
+            'DJANGO_ALLOWED_HOSTS no puede contener * en producción.'
+        )
+
+CSRF_TRUSTED_ORIGINS = []
+if DEBUG:
+    CSRF_TRUSTED_ORIGINS.extend([
+        # Permite acceder vía túneles de ngrok sin disparar el chequeo de origen
+        'https://*.ngrok-free.app',
+        # Permite subdominios temporales de Cloudflare Tunnel
+        'https://*.trycloudflare.com',
+    ])
+# Django 4+ exige scheme en cada origen; descartamos valores inválidos (ej. "*")
+# que llegan por env para no tumbar el deploy con SystemCheckError 4_0.E001.
+CSRF_TRUSTED_ORIGINS.extend(
+    origin
+    for origin in clean_env_list(
+        config('DJANGO_CSRF_TRUSTED_ORIGINS', default='', cast=Csv())
+    )
+    if origin.startswith(('http://', 'https://'))
+)
+if railway_public_domain:
+    CSRF_TRUSTED_ORIGINS.append(f'https://{railway_public_domain}')
+
+MAPBOX_ACCESS_TOKEN = config('MAPBOX_TOKEN', default=None)
+GOOGLE_WEB_CLIENT_ID = config('GOOGLE_WEB_CLIENT_ID', default='')
+PHOTON_API_URL = config('PHOTON_API_URL', default='https://photon.komoot.io').strip()
+# Herramienta temporal para aplicar migraciones desde Railway durante el desarrollo.
+# Si queda vacío, el endpoint permanece inutilizable.
+DJANGO_MIGRATION_ENDPOINT_KEY = config('DJANGO_MIGRATION_ENDPOINT_KEY', default='').strip()
 
 
 # Application definition
 
 INSTALLED_APPS = [
+    'daphne',
+    'channels',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'graphene_django',
     'drf_spectacular',
     'drf_yasg',
     'rest_framework_swagger',
     'rest_framework_simplejwt',
     'rest_framework',
+    'storages',
     'store',
 ]
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -79,25 +155,85 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'backend_ojeda.wsgi.application'
+ASGI_APPLICATION = 'backend_ojeda.asgi.application'
+
+# Channels: por defecto usa la capa en memoria (suficiente para un único
+# proceso en desarrollo). Si se define ``REDIS_URL`` se conmuta a redis.
+REDIS_URL = config('REDIS_URL', default=None)
+if REDIS_URL:
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels_redis.core.RedisChannelLayer',
+            'CONFIG': {'hosts': [REDIS_URL]},
+        }
+    }
+else:
+    CHANNEL_LAYERS = {
+        'default': {'BACKEND': 'channels.layers.InMemoryChannelLayer'},
+    }
+
+if REDIS_URL:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+            'LOCATION': REDIS_URL,
+        },
+    }
+else:
+    # Desarrollo local. En producción REDIS_URL debe estar configurada para
+    # que los límites de solicitudes funcionen entre todos los workers.
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+            'LOCATION': 'tuplaza-security',
+        },
+    }
+
+EXPO_PUSH_DISABLED = config('EXPO_PUSH_DISABLED', default=False, cast=bool)
 
 
 # Database
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
 
 
-DB_ENGINE = config('DJANGO_DB_ENGINE', default='sqlite')
-
-if DB_ENGINE == 'postgresql':
-    DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.postgresql',
-            'NAME': config('POSTGRES_DB', default='mydatabase'),
-            'USER': config('POSTGRES_USER', default='myuser'),
-            'PASSWORD': config('POSTGRES_PASSWORD', default='mypassword'),
-            'HOST': config('POSTGRES_HOST', default='localhost'),
-            'PORT': config('POSTGRES_PORT', default=5432),
-        }
+def postgres_database_config():
+    return {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': config('POSTGRES_DB', default=config('PGDATABASE', default='mydatabase')),
+        'USER': config('POSTGRES_USER', default=config('PGUSER', default='myuser')),
+        'PASSWORD': config('POSTGRES_PASSWORD', default=config('PGPASSWORD', default='mypassword')),
+        'HOST': config('POSTGRES_HOST', default=config('PGHOST', default='localhost')),
+        'PORT': config('POSTGRES_PORT', default=config('PGPORT', default=5432), cast=int),
+        'CONN_MAX_AGE': config('DJANGO_DB_CONN_MAX_AGE', default=60, cast=int),
     }
+
+
+def database_config_from_url(database_url):
+    parsed = urlparse(database_url)
+    if parsed.scheme not in {'postgres', 'postgresql'}:
+        raise ValueError(f'Unsupported DATABASE_URL scheme: {parsed.scheme}')
+
+    return {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': parsed.path.lstrip('/'),
+        'USER': unquote(parsed.username or ''),
+        'PASSWORD': unquote(parsed.password or ''),
+        'HOST': parsed.hostname or 'localhost',
+        'PORT': parsed.port or 5432,
+        'CONN_MAX_AGE': config('DJANGO_DB_CONN_MAX_AGE', default=60, cast=int),
+    }
+
+
+DATABASE_URL = config('DATABASE_URL', default='').strip()
+DB_ENGINE = config('DJANGO_DB_ENGINE', default='sqlite').strip().lower()
+postgres_requested = DB_ENGINE == 'postgresql' or bool(
+    config('POSTGRES_HOST', default='').strip() or config('PGHOST', default='').strip()
+)
+
+if DATABASE_URL:
+    DATABASES = {'default': database_config_from_url(DATABASE_URL)}
+elif postgres_requested:
+    DATABASES = {'default': postgres_database_config()}
 else:  # Por defecto, usa SQLite
     DATABASES = {
         'default': {
@@ -146,7 +282,10 @@ AUTH_PASSWORD_VALIDATORS = [
 
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=30),
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
+    # Mantiene la sesión activa durante periodos largos; el access token
+    # continúa renovándose automáticamente desde el frontend.
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=365),
+    'ROTATE_REFRESH_TOKENS': True,
     'AUTH_HEADER_TYPES': ('Bearer',),
 }
 
@@ -159,9 +298,63 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.IsAuthenticated',
     ],
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+        'rest_framework.throttling.ScopedRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': config('DRF_ANON_RATE', default='60/min'),
+        'user': config('DRF_USER_RATE', default='300/min'),
+        'auth': config('DRF_AUTH_RATE', default='10/min'),
+        'registration': config('DRF_REGISTRATION_RATE', default='5/hour'),
+        'email_check': config('DRF_EMAIL_CHECK_RATE', default='30/min'),
+    },
+}
+
+SERVE_API_DOCS = config('DJANGO_SERVE_API_DOCS', default=DEBUG, cast=bool)
+GRAPHQL_RATE_LIMIT = config('GRAPHQL_RATE_LIMIT', default=120, cast=int)
+GRAPHQL_AUTH_RATE_LIMIT = config('GRAPHQL_AUTH_RATE_LIMIT', default=10, cast=int)
+
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'Ojeda Backend API',
+    'DESCRIPTION': (
+        'Documentacion interactiva del backend.\n\n'
+        'Autenticacion:\n'
+        '- Obtiene un JWT en `/api/token/`.\n'
+        '- En Swagger usa el boton `Authorize` con `Bearer <token>`.'
+    ),
+    'VERSION': '1.0.0',
+    'SERVE_INCLUDE_SCHEMA': False,
+    'SERVE_PERMISSIONS': [
+        'rest_framework.permissions.AllowAny'
+        if DEBUG else 'rest_framework.permissions.IsAdminUser'
+    ],
+    'SERVE_AUTHENTICATION': [],
+    'COMPONENT_SPLIT_REQUEST': True,
+    'SWAGGER_UI_SETTINGS': {
+        'deepLinking': True,
+        'displayRequestDuration': True,
+        'persistAuthorization': True,
+    },
+    'SECURITY': [{'BearerAuth': []}],
+    'APPEND_COMPONENTS': {
+        'securitySchemes': {
+            'BearerAuth': {
+                'type': 'http',
+                'scheme': 'bearer',
+                'bearerFormat': 'JWT',
+            }
+        }
+    },
 }
 
 AUTH_USER_MODEL = 'store.Usuario'  # Asegúrate de que esto esté configurado
+
+
+GRAPHENE = {
+    'SCHEMA': 'backend_ojeda.schema.schema',
+}
 
 
 # Internationalization
@@ -169,7 +362,7 @@ AUTH_USER_MODEL = 'store.Usuario'  # Asegúrate de que esto esté configurado
 
 LANGUAGE_CODE = 'en-us'
 
-TIME_ZONE = 'UTC'
+TIME_ZONE = config('DJANGO_TIME_ZONE', default='UTC')
 
 USE_I18N = True
 
@@ -181,9 +374,118 @@ STATICFILES_DIRS = [
 
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
 
-MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'
+# Email: preferimos la API HTTP de Resend (Railway bloquea puertos SMTP
+# salientes). Fallback: SMTP si hay EMAIL_HOST, o consola en dev.
+RESEND_API_KEY = config('RESEND_API_KEY', default='').strip()
+EMAIL_HOST = config('EMAIL_HOST', default='').strip()
+if EMAIL_HOST:
+    EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+    EMAIL_PORT = config('EMAIL_PORT', default=587, cast=int)
+    EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='')
+    EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
+    EMAIL_USE_TLS = config('EMAIL_USE_TLS', default=True, cast=bool)
+    EMAIL_TIMEOUT = 10
+else:
+    EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+DEFAULT_FROM_EMAIL = config(
+    'DEFAULT_FROM_EMAIL', default='TuPlaza <no-reply@tuplaza.app>'
+)
+
+# Sin esto, los logger.error de la app no llegan a la consola de Railway.
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'simple': {
+            'format': '[{levelname}] {asctime} {name}: {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'simple',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'INFO',
+    },
+}
+
+MEDIA_BUCKET_NAME = first_env_value('AWS_STORAGE_BUCKET_NAME', 'BUCKET')
+MEDIA_BUCKET_ACCESS_KEY = first_env_value('AWS_ACCESS_KEY_ID', 'ACCESS_KEY_ID')
+MEDIA_BUCKET_SECRET_KEY = first_env_value('AWS_SECRET_ACCESS_KEY', 'SECRET_ACCESS_KEY')
+MEDIA_BUCKET_ENDPOINT = first_env_value('AWS_S3_ENDPOINT_URL', 'ENDPOINT')
+MEDIA_BUCKET_REGION = first_env_value('AWS_S3_REGION_NAME', 'REGION', default='auto')
+MEDIA_BUCKET_LOCATION = first_env_value('AWS_MEDIA_LOCATION', default='media')
+MEDIA_BUCKET_ADDRESSING_STYLE = first_env_value('AWS_S3_ADDRESSING_STYLE', default='virtual')
+S3_MEDIA_ENABLED = config(
+    'S3_MEDIA_ENABLED',
+    default='true'
+    if MEDIA_BUCKET_NAME and MEDIA_BUCKET_ENDPOINT and MEDIA_BUCKET_ACCESS_KEY and MEDIA_BUCKET_SECRET_KEY
+    else 'false',
+    cast=bool,
+)
+
+if S3_MEDIA_ENABLED:
+    STORAGES = {
+        'default': {
+            'BACKEND': 'storages.backends.s3.S3Storage',
+            'OPTIONS': {
+                'bucket_name': MEDIA_BUCKET_NAME,
+                'access_key': MEDIA_BUCKET_ACCESS_KEY,
+                'secret_key': MEDIA_BUCKET_SECRET_KEY,
+                'endpoint_url': MEDIA_BUCKET_ENDPOINT,
+                'region_name': MEDIA_BUCKET_REGION,
+                'default_acl': None,
+                'querystring_auth': config('AWS_QUERYSTRING_AUTH', default=True, cast=bool),
+                'querystring_expire': config('AWS_QUERYSTRING_EXPIRE', default=3600, cast=int),
+                'file_overwrite': config('AWS_S3_FILE_OVERWRITE', default=False, cast=bool),
+                'location': MEDIA_BUCKET_LOCATION.strip('/'),
+                'addressing_style': MEDIA_BUCKET_ADDRESSING_STYLE or None,
+            },
+        },
+        'staticfiles': {
+            'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage',
+        },
+    }
+    MEDIA_URL = config('DJANGO_MEDIA_URL', default='/media/')
+    MEDIA_ROOT = BASE_DIR / 'media'
+    SERVE_MEDIA = False
+else:
+    STORAGES = {
+        'default': {
+            'BACKEND': 'django.core.files.storage.FileSystemStorage',
+        },
+        'staticfiles': {
+            'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage',
+        },
+    }
+    MEDIA_URL = '/media/'
+    MEDIA_ROOT = Path(config('DJANGO_MEDIA_ROOT', default=str(BASE_DIR / 'media')))
+    # En producción no servimos archivos subidos desde Django aunque quede
+    # una variable antigua con valor True. Deben salir por almacenamiento
+    # privado (S3/R2) con URLs temporales.
+    SERVE_MEDIA = DEBUG and config('DJANGO_SERVE_MEDIA', default=True, cast=bool)
+
+USE_X_FORWARDED_HOST = True
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+if not DEBUG:
+    SECURE_SSL_REDIRECT = config('DJANGO_SECURE_SSL_REDIRECT', default=True, cast=bool)
+    SECURE_HSTS_SECONDS = 31536000
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    SECURE_REFERRER_POLICY = 'same-origin'
+    X_FRAME_OPTIONS = 'DENY'
+    CSRF_COOKIE_SECURE = True
+    SESSION_COOKIE_SECURE = True
+    SESSION_COOKIE_HTTPONLY = True
+    SESSION_COOKIE_SAMESITE = 'Lax'
+    CSRF_COOKIE_SAMESITE = 'Lax'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'

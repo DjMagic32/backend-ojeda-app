@@ -1,0 +1,764 @@
+# Checklist de brecha: capacidades tipo Fina Partner para TuPlaza
+
+Documento de trabajo para evaluar qué necesitamos para que los negocios que operan en
+TuPlaza tengan capacidades parecidas a un sistema administrativo como Fina Partner.
+
+## Cómo usar este documento
+
+- `[x]` Cubierto actualmente en TuPlaza.
+- `[~]` Parcial: existe una base, pero falta una parte importante para considerarlo listo.
+- `[ ]` Pendiente.
+- `[-]` Fuera del alcance inmediato o depende de un tercero/regulación.
+
+Una casilla sólo debe pasar a `[x]` cuando exista el modelo y la migración, la API protegida,
+los permisos, las validaciones transaccionales, las pruebas y la pantalla que la consuma.
+
+Cuando una capacidad tenga varias capas, se registrará por separado: **API**, **app** y
+**operación/despliegue**. Que exista el endpoint no significa que la capacidad esté terminada
+para el usuario.
+
+**Referencia funcional:** `Análisis y Réplica Fina Partner.pdf` (documento entregado para
+este análisis). El PDF se usa como referencia de capacidades, no como especificación literal
+ni como afirmación independiente de sus cifras comerciales.
+
+**Estado revisado:** 2026-09-09
+**Código revisado principalmente:** `store/models.py`, `store/views.py`,
+`store/graphql/schema.py`, `store/services/inventario.py`, `store/services/ventas.py` y
+`store/analytics/predicciones.py`.
+
+### Avance del primer paso
+
+- **API:** `[x]` `Negocio`, `NegocioMiembro`, migración de datos existentes, creación
+  automática para nuevas tiendas y `GET /api/store/mi-negocio/`.
+- **App:** `[x]` consume el endpoint de forma tolerante a errores y muestra el contexto del
+  negocio activo en el perfil de la tienda, sin bloquear el catálogo si el backend aún no
+  tiene aplicada la migración.
+- **Operación:** `[x]` las migraciones del módulo fueron ejecutadas en Railway; la respuesta
+  confirmó que no había migraciones pendientes y no se borraron datos.
+
+### Avance del segundo paso
+
+- **API:** `[x]` `Sucursal` y `Almacen`, códigos únicos, estructura principal automática,
+  endpoints protegidos de alta/edición/desactivación y datos anidados en
+  `GET /api/store/mi-negocio/`.
+- **App:** `[x]` el perfil de la tienda muestra el resumen y existe una pantalla para crear
+  y desactivar sucursales y almacenes.
+- **Renombrado en app (2026-09-09):** `[~]` implementado “Editar nombre” para sucursales
+  y almacenes, incluidos registros inactivos. Permite cancelar, valida nombres de 1 a 120
+  caracteres, evita envíos simultáneos y conserva el formulario si la API rechaza el cambio.
+  Reutiliza los PATCH existentes enviando sólo `nombre`; conserva códigos, relaciones,
+  existencias e historial. Sin cambios de modelos ni nuevas migraciones.
+  Compilación Python correcta y TypeScript con los mismos 75 errores preexistentes.
+  Pendiente comprobar el guardado autenticado y la pantalla en Android.
+- **Operación:** `[x]` la migración `0037_sucursal_almacen` quedó aplicada en Railway junto
+  con el resto de migraciones del proyecto; falta validar los datos reales con usuarios de
+  prueba.
+- **Alcance pendiente:** la asociación al inventario y las transferencias básicas existen
+  en los pasos siguientes; falta validarlas con datos reales. El renombrado ya está
+  implementado; su validación funcional se registra por separado y no bloquea el desarrollo
+  de los siguientes pendientes.
+
+### Avance del tercer paso
+
+- **API:** `[~]` se agregó `InventarioAlmacen`, la migración `0038_inventario_almacen`,
+  consulta protegida por negocio en `GET /api/store/inventario-almacenes/`, asociación del
+  stock existente al almacén principal, registro de movimientos con almacén y transferencia
+  atómica entre almacenes mediante `POST /api/store/transferencias-inventario/`. Las ventas
+  y ajustes antiguos siguen usando automáticamente el almacén principal cuando existe.
+- **App:** `[~]` la pantalla de sucursales y almacenes muestra cuántos productos están
+  asociados a cada almacén, el historial de stock muestra la sucursal/almacén del movimiento
+  y hay una pantalla para transferir existencias. La selección explícita en ventas/ajustes
+  ya existe desde el cuarto paso; su validación funcional sigue pendiente.
+- **Operación:** `[x]` `0038_inventario_almacen` y `0039_transferencia_inventario` fueron
+  ejecutadas en Railway. Django dejó una advertencia sobre cambios de modelos sin migración
+  equivalente; no se debe marcar el bloque completo hasta revisar ese aviso y probar datos
+  reales.
+
+### Avance del cuarto paso
+
+- **API:** `[x]` las ventas presenciales aceptan un `almacen_id` opcional, verifican que el
+  almacén pertenezca al negocio de la tienda y registran la salida en ese almacén. Los
+  ajustes ya usan el mismo mecanismo; sin `almacen_id` se conserva el almacén principal.
+- **App:** `[x]` “Mis productos” y “Modo caja” cargan los almacenes activos y permiten elegir
+  dónde se aplica el ajuste o la venta.
+- **Operación:** `[x]` no requiere una migración adicional; el cambio es compatible con el
+  endpoint anterior y el fallback del almacén principal.
+- **Pruebas:** `[ ]` falta comprobar con dos almacenes, stock insuficiente, servicios y
+  permisos de un almacén de otra tienda.
+
+### Quinto paso: correcciones de ajustes y transferencias (2026-09-09)
+
+- **API:** `[~]` `nuevo_stock` se convierte en delta después de bloquear el producto y
+  leer las existencias del almacén efectivo. Sin `almacen_id` cuenta el principal, no el
+  total agregado. La activación del control de stock también queda dentro de la transacción;
+  un conteo sin cambios devuelve `movimiento: null`. El servicio rechaza ajustes sobre
+  servicios, almacenes ajenos/inactivos y operaciones sin principal cuando ya existe detalle
+  de inventario. Falta verificar estas condiciones contra PostgreSQL y usuarios reales.
+- **Transferencias:** `[~]` se corrigió un caso que copiaba el stock total al origen cuando
+  sólo había existencias en un tercer almacén. Ahora busca detalle en todos los almacenes
+  del producto antes de aplicar el fallback legado. No se repararon datos históricos:
+  cualquier posible discrepancia requiere una auditoría separada.
+- **App:** `[~]` “Mis productos” muestra saldo del almacén y total por separado; los botones
+  envían `delta: 1/-1`, recargan las existencias y bloquean solicitudes simultáneas del mismo
+  producto. Una consulta fallida no se presenta como saldo cero; permite reintentar.
+  Las transferencias rechazan cantidades fraccionarias en vez de truncarlas. Falta prueba
+  visual en Android. El bloqueo del botón no equivale a idempotencia de red.
+- **Verificación local:** `[x]` compilación Python, 17 pruebas del servicio con dobles de ORM
+  y 7 pruebas del helper de la app. `npx tsc --noEmit` conserva exactamente los 75 errores
+  preexistentes, sin nuevos errores. No se ejecutaron Django, migraciones ni una base local.
+- **Rutas:** `[x]` smoke anónimo en Railway: salud `200` y siete rutas administrativas
+  GET/POST con `401`. Esto verifica disponibilidad y autenticación requerida; no permisos
+  entre negocios ni operaciones autenticadas.
+- **Operación:** `[~]` sin cambios de modelos, migraciones, dependencias ni arranque. El
+  smoke no identifica el commit que Railway está sirviendo; falta confirmar la revisión
+  desplegada en sus logs y probar el flujo autenticado.
+
+**Revisión del aviso de migraciones:** existe al menos una diferencia comprobada:
+`MovimientoStock.origen` añade la opción `transferencia` en `models.py`, mientras que
+`0024_inventario_pro_movimiento_stock` no la incluye y `0039_transferencia_inventario`
+sólo altera `tipo`. No demuestra que sea la única diferencia ni que explique el 502.
+Se mantiene pendiente comparar el estado completo en un entorno Django preparado antes de
+corregir las diferencias de tablas existentes. Para idempotencia se revisó por separado
+`0040_operacion_venta_presencial`: sólo crea una tabla independiente y sus campos coinciden
+con el nuevo modelo; no altera las tablas existentes ni pretende resolver el aviso anterior.
+Además, el `start.sh` actual sólo ejecuta `migrate` si `AUTO_MIGRATE=1`;
+no se debe asumir que cada push aplica migraciones automáticamente.
+
+**Reservas y caja:** no se reactivaron reservas ni se añadió sesión de caja. No hay acceso
+disponible a logs de Railway en esta sesión (sin CLI/conector de Railway); el diagnóstico
+del 502 sigue siendo requisito antes de reintentar reservas. Siguiente bloque recomendado:
+pruebas autenticadas de inventario/POS con dos negocios y concurrencia en PostgreSQL;
+después, idempotencia de ventas y sesión de caja.
+
+### Sexto paso: disponibilidad en caja y transferencias (2026-09-09)
+
+- **API:** `[~]` la venta presencial se concentra en
+  `store/services/ventas.py::registrar_venta_presencial`. Bloquea todos los productos por PK
+  dentro de la transacción antes de leer precios, comprobar monedas y crear el ticket.
+  Conserva las líneas en el orden recibido, el almacén opcional, la tasa y el contrato de
+  respuesta. La búsqueda de almacén filtra por tienda y devuelve un error genérico si no
+  está disponible. Falta comprobar rollback y dos tickets simultáneos en PostgreSQL.
+- **App/caja:** `[~]` muestra existencias del almacén por línea, valida la cantidad acumulada
+  al escanear/incrementar y vuelve a consultar antes de cobrar. Al cambiar de almacén,
+  reevalúa el ticket y bloquea el cobro si no alcanza el saldo. Durante la petición bloquea
+  cambios del ticket/almacén y dobles envíos desde la pantalla. Los servicios no se limitan
+  por un stock legado; la confirmación muestra el importe devuelto por la API.
+- **App/transferencias:** `[~]` muestra saldo en origen y lo reconsulta antes de confirmar.
+  Si falla la consulta, ofrece actualizar existencias y no permite confirmar un saldo
+  desconocido. La consulta compartida con ajustes/caja se renueva al volver a cada pantalla
+  y tiene un timeout de 15 segundos. La creación rápida en caja también reconsulta el
+  inventario antes de agregar el nuevo producto, cuyo stock inicial pertenece al principal.
+- **Verificación local:** `[x]` 27 pruebas de servicios con dobles de ORM (17 de inventario
+  y 10 de ventas), 12 pruebas del helper de existencias, `py_compile` y TypeScript sin
+  diferencias respecto a sus 75 errores preexistentes. No acredita ejecución en Android,
+  SQL ni concurrencia real.
+- **Rutas:** `[x]` smoke anónimo de ocho casos en Railway: salud `200` y rutas protegidas
+  `401`; no confirma operaciones autenticadas ni identifica la revisión desplegada.
+- **Operación:** `[~]` no cambia modelos, migraciones, dependencias ni `start.sh`. Sigue
+  pendiente confirmar la revisión desplegada y los casos autenticados descritos en el plan.
+
+**Idempotencia:** se revisó como candidato para este bloque, pero necesita un registro
+persistente por negocio/operación, restricción única y recuperación tras timeout/reinicio.
+Su migración queda pendiente de resolver la comparación completa de modelos y el despliegue
+de migraciones. Los bloqueos de botones y las transacciones de este paso **no** hacen seguros
+los reintentos de red. Las reservas y la sesión de caja siguen pendientes.
+
+### Séptimo paso: diagnóstico y suite PostgreSQL preparados (2026-09-09)
+
+- **Diagnóstico:** `[~]` comando `diagnostico_inventario` preparado para Railway. Usa una
+  transacción PostgreSQL `REPEATABLE READ, READ ONLY`, informa migraciones pendientes,
+  conflictos y diferencias de los modelos de `store` contra el estado completo de sus
+  migraciones. Consulta discrepancias entre total y detalle y existencias de otro negocio.
+  Sólo muestra conteos y una muestra limitada de IDs. No migra ni repara datos y no se
+  incorpora al arranque. Falta ejecutarlo con acceso al servicio.
+- **Despliegue:** `[x]` la respuesta de salud agrega `revision` a partir de un SHA válido de
+  `RAILWAY_GIT_COMMIT_SHA`; si Railway no lo proporciona, responde `null`. El smoke admite
+  `--expected-revision` para exigir coincidencia, además de verificar las rutas protegidas.
+  Railway confirmó `7d5b8e6` y el smoke con SHA completo pasó sus ocho casos.
+- **Integración:** `[~]` 15 casos preparados en `store/test_inventario_integration.py`:
+  REST con JWT, dos negocios, cliente, miembro desactivado, almacenes, servicios, rollback,
+  líneas repetidas, cuatro escenarios de concurrencia y diagnóstico sin reparación.
+  **No ejecutados:** todavía no hay PostgreSQL QA ni acceso a Railway en esta sesión.
+- **Aislamiento de pruebas:** `[~]` configuración separada que exige
+  `TUPLAZA_TEST_DATABASE_URL`, acepta sólo bases `tuplaza_qa_<nombre>` y pide al runner
+  crear `test_tuplaza_qa_<nombre>`. No usa `DATABASE_URL` como alternativa. Push desactivado,
+  canales/caché en memoria y correo de pruebas. Los fixtures crean sus propias cuentas.
+  Las pruebas visuales en Android siguen necesitando cuentas de un entorno QA accesible.
+- **Verificación local:** `[x]` `py_compile` de todos los Python tocados y 34 pruebas locales
+  aprobadas (27 anteriores + 7 de configuración/revisión). Son distintas de los 15 casos
+  de integración que siguen pendientes. Frontend sin cambios: mismos 75 errores TypeScript.
+
+La falta de acceso y entorno de pruebas impide cerrar la validación funcional real y el
+diagnóstico del 502. Se preparó la ejecución reproducible; no se corrigieron migraciones,
+no se modificó inventario operativo y no se activaron reservas ni idempotencia.
+
+### Octavo paso: historial de inventario filtrable y paginado (2026-09-09)
+
+- **API:** implementada consulta por almacén, origen y últimos 7/30/90 días en la ruta
+  existente de movimientos. `paginado=1` devuelve páginas de 50 y un cursor por ID para
+  consultar movimientos anteriores, incluyendo los que antes quedaban fuera del límite.
+  Sin ese parámetro conserva el array de hasta 50, ordenado por fecha, para apps anteriores.
+  La consulta parte del producto autorizado y carga sus ubicaciones sin consultas por fila.
+- **App:** implementados filtros, consulta de almacenes inactivos, “Cargar anteriores”,
+  reintento sin perder páginas cargadas y recarga al regresar a la pantalla. Las respuestas
+  de filtros anteriores se descartan; una API antigua no se presenta como si hubiera filtrado.
+- **Verificación local:** `[x]` compilación Python y 43 pruebas locales (9 nuevas del
+  historial con doble de consulta); 3 pruebas del contrato de la app. TypeScript conserva
+  los mismos 75 errores preexistentes. Estas pruebas no ejecutan Django ni PostgreSQL.
+- **Validación funcional:** `[ ]` comprobar filtros, permisos y más de 50 movimientos con
+  sesión real y Android. La auditoría de autor y motivo de ajustes continúa pendiente.
+- **Compatibilidad:** sin cambios de modelos, migraciones, stock ni arranque; el aviso
+  anterior de diferencias de migraciones sigue registrado y no se intenta corregir aquí.
+
+### Noveno paso: ventas presenciales idempotentes y recuperación (2026-09-09)
+
+- **API:** `[~]` nueva ruta de operaciones con UUID por tienda, huella del ticket y respuesta
+  original persistida. Un reintento devuelve el mismo comprobante sin consultar nuevamente
+  precios ni descontar stock; reutilizar la clave con otro ticket devuelve `409`.
+  La restricción única y el bloqueo de operación preceden a los bloqueos de productos;
+  venta y comprobante se guardan en una sola transacción. Falta validación PostgreSQL real.
+- **Cancelación:** implementada como estado definitivo de la operación. Si el cobro ya
+  terminó devuelve su comprobante; si no, conserva una marca que rechaza POST atrasados.
+  No anula ventas confirmadas ni devuelve existencias.
+- **App:** `[~]` guarda clave, líneas y almacén antes del POST, separados por cuenta y
+  servidor. Recupera al reabrir caja, congela el ticket pendiente y permite recuperar o
+  cancelar de forma segura. Conserva el comprobante hasta pulsar “Nueva venta”. Si falla
+  el almacenamiento no envía el cobro. Pendiente prueba visual y cierre real de Android.
+- **Compatibilidad:** la ruta anterior sigue funcionando para apps anteriores, sin garantía
+  de idempotencia. La nueva app sólo usa la ruta protegida; comprueba disponibilidad y no
+  degrada a cobro sin clave. Sin tabla nueva, las operaciones responden `503` sin escrituras.
+- **Migración:** `[x]` `0040_operacion_venta_presencial` revisada y aplicada:
+  sólo crea `OperacionVentaPresencial`; no modifica datos, arranque ni tablas existentes.
+  Guarda el ID de tienda y un comprobante JSON sin relaciones inversas para evitar cambios
+  en consultas/borrados legados durante el despliegue. No hay limpieza automática de claves.
+  El endpoint autorizado de migraciones respondió `200` y “No migrations to apply” sobre
+  la revisión que incluye `0040`; no hubo migraciones adicionales que ejecutar.
+- **Verificación local:** `[x]` compilación Python, 53 pruebas locales de backend (10 nuevas
+  de idempotencia) y 12 del almacenamiento/recuperación frontend. TypeScript conserva los
+  75 errores preexistentes. Se añadieron 7 casos PostgreSQL, preparados pero no ejecutados.
+
+### Décimo paso: sesiones de caja y arqueo bimonetario (2026-09-09)
+
+- **API/app:** `[~]` apertura por almacén con fondos USD/VES, una sola sesión abierta por
+  ubicación, entradas/retiros con actor y motivo, cierre definitivo con contado, esperado
+  y diferencia separados por moneda. Historial paginado de sesiones y movimientos.
+  Acceso desde el perfil de tienda y desde Modo caja. Pendiente recorrido autenticado/Android.
+- **Ventas:** la nueva app requiere sesión abierta y un medio de pago por ticket. Efectivo
+  aumenta el saldo esperado; Pago Móvil, Zelle, tarjeta y transferencia se informan aparte.
+  La moneda del pago es la del ticket; no hay pagos mixtos, conversión ni cálculo de vuelto.
+  La venta, su movimiento de caja y su comprobante idempotente se confirman juntos.
+- **Concurrencia:** bloqueo de sesión compartido por ventas, movimientos y cierre; operación
+  idempotente antes del bloqueo de sesión/productos. El retiro no puede superar el efectivo
+  disponible en su moneda. Una venta confirmada sigue siendo recuperable tras cerrar caja.
+  Apertura/movimiento/cierre también guardan clave antes de enviar y permiten recuperar o
+  cancelar el intento sin duplicar efectos. Falta ejecutar las carreras reales en PostgreSQL.
+- **Compatibilidad:** `0041_sesiones_caja` sólo crea tres tablas nuevas; no altera datos ni
+  tablas existentes. Las ventas pendientes anteriores conservan su ruta y huella originales.
+  Las ventas de clientes anteriores sin sesión no se incorporan automáticamente al arqueo.
+  Las rutas nuevas responden `503` antes de tener sus tablas; no modifican el arranque.
+- **Verificación local:** `[x]` compilación Python, 68 pruebas de backend y 39 de frontend;
+  TypeScript conserva exactamente los 75 errores previos. Comparación estática de todos los
+  campos, opciones y restricciones de los modelos nuevos contra `0041`, sin diferencias.
+- **Despliegue/migración:** `[x]` Railway confirmó la revisión `54575eb` que incluye `0041`;
+  el endpoint autorizado respondió `200` y “No migrations to apply”, confirmando que ya
+  estaba aplicada. Smoke: salud `200` y 17 consultas/operaciones administrativas anónimas
+  rechazadas con `401`, incluidas las rutas de caja. Esto no acredita un flujo autenticado.
+  El aviso anterior de modelos sin migración sigue separado; no se crearon correcciones
+  automáticas para diferencias no diagnosticadas.
+
+### Undécimo paso: cuentas por cobrar y diferencial cambiario realizado (2026-09-14)
+
+- **API:** `[~]` `CuentaPorCobrar` (saldo en USD, tasa de emisión, estado
+  pendiente/parcial/pagada/anulada), `AbonoCuentaPorCobrar` (tasa de liquidación, monto
+  en VES equivalente, diferencial cambiario) y `OperacionCuentaPorCobrar` para
+  idempotencia, reutilizando exactamente el patrón de `OperacionCaja`
+  (`confirmar_operacion`/`cancelar_operacion` genéricos de `ventas_idempotentes.py`).
+  Endpoint único `POST /api/store/cuentas-cobrar/operaciones/` con `accion` en
+  `crear`/`abonar`/`anular`; `GET /api/store/cuentas-cobrar/` lista y filtra por estado;
+  `GET /api/store/cuentas-cobrar/{id}/` trae la cuenta y sus abonos.
+- **Diferencial cambiario:** implementado en `store/services/cuentas.py::registrar_abono`
+  siguiendo la fórmula del análisis (ΔC = monto_usd_abonado · (tasa_liquidación −
+  tasa_emisión)), guardado por abono en `diferencial_cambiario_ves` (positivo = ganancia,
+  negativo = pérdida). El saldo de la cuenta permanece siempre en USD; el diferencial es
+  un asiento informativo en VES, no afecta cuánto debe el cliente en dólares.
+- **Idempotencia:** cada operación (crear/abonar/anular) requiere `clave_operacion` UUID;
+  un reintento con la misma clave devuelve el mismo resultado sin duplicar el abono ni
+  recalcular el diferencial con una tasa distinta. Cancelar sólo bloquea intentos que no
+  se hayan ejecutado, igual que en caja y ventas presenciales.
+- **Migración:** `[x]` `0042_cuentas_por_cobrar.py` revisada: sólo crea las tres tablas
+  nuevas, sin tocar datos ni tablas existentes. Comparación estática automatizada contra
+  `store/models.py` en `tests/test_cuentas_migration.py` (mismo enfoque AST que
+  `test_caja_migration.py`), sin diferencias.
+- **Verificación local:** `[x]` `python3 -m py_compile` de todos los archivos tocados y
+  `python3 -m unittest discover -s tests -v`: 81 pruebas correctas (12 nuevas del
+  servicio de cuentas con dobles de ORM, cubriendo diferencial a favor/en contra, abono
+  parcial vs total, rechazo de abono mayor al saldo, cuentas sin tasa vigente, anulación
+  con/sin abonos y aislamiento por tienda). **No se ejecutó Django, migraciones ni
+  PostgreSQL real** — sigue aplicando `CONVENTIONS.md`.
+- **Pendiente:** `[ ]` desplegar y confirmar `0042` aplicada en Railway (no hecho en esta
+  sesión: sin acceso a Railway CLI/logs, mismo bloqueo que el diagnóstico del 502
+  documentado en el quinto paso). `[~]` pantalla en TuPlazaFront implementada
+  (`AccountsReceivable.tsx`, `accountsApi.ts`, `pendingAccount.ts`; ver
+  `TuPlazaFront/ROADMAP.md`, Fase 2); falta prueba real en Android. `[ ]` alertas de
+  vencimiento automáticas. `[ ]` cuentas por pagar (mismo patrón, para proveedores).
+  `[ ]` casos PostgreSQL de concurrencia (dos abonos simultáneos sobre el mismo saldo).
+
+### Duodécimo paso: cuentas por pagar, simétricas a cuentas por cobrar (2026-09-14)
+
+- **API:** `[~]` `CuentaPorPagar`, `AbonoCuentaPorPagar`, `OperacionCuentaPorPagar`
+  (migración `0043`), servicio `store/services/pagos.py` reutilizando exactamente el
+  patrón de `store/services/cuentas.py` (mismo diseño de idempotencia vía
+  `confirmar_operacion`/`cancelar_operacion` genéricos). Endpoint
+  `POST /api/store/cuentas-pagar/operaciones/` con `accion` en
+  `crear`/`abonar`/`anular`; `GET /api/store/cuentas-pagar/` lista y filtra por
+  estado; `GET /api/store/cuentas-pagar/{id}/` trae la cuenta y sus abonos.
+- **Diferencial cambiario con signo invertido:** a diferencia de una cuenta por
+  cobrar, aquí ΔC = monto_usd_abonado · (tasa_emisión − tasa_liquidación). Si la
+  tasa sube entre la emisión de la deuda y el pago, liquidar el mismo monto en USD
+  cuesta más bolívares: eso es una **pérdida** cambiaria para el negocio (signo
+  negativo), no una ganancia. Es el reflejo contable correcto de que una cuenta por
+  pagar es un pasivo, no un activo. Cubierto explícitamente por
+  `test_abono_con_tasa_al_alza_registra_perdida_cambiaria` y
+  `test_abono_con_tasa_a_la_baja_registra_ganancia_cambiaria`.
+- **Migración:** `[x]` `0043_cuentas_por_pagar.py` revisada: sólo crea las tres
+  tablas nuevas, depende de `0042`, sin tocar datos ni tablas existentes.
+  Comparación estática AST en `tests/test_pagos_migration.py`, sin diferencias.
+- **Verificación local:** `[x]` `python3 -m py_compile` de todos los archivos
+  tocados y `python3 -m unittest discover -s tests -v`: 94 pruebas correctas (13
+  nuevas: 12 del servicio de pagos con dobles de ORM + 1 de comparación de
+  migración). **No se ejecutó Django, migraciones ni PostgreSQL real.**
+- **Pendiente:** `[ ]` desplegar y confirmar `0043` aplicada en Railway (sin
+  acceso a Railway en esta sesión, mismo bloqueo documentado en pasos anteriores).
+  `[~]` pantalla en TuPlazaFront implementada (`AccountsPayable.tsx`,
+  `payablesApi.ts`, `pendingPayable.ts`; `npx tsc --noEmit` con los 75 errores
+  preexistentes, ninguno nuevo); falta prueba real en Android. `[ ]` entidad
+  `Proveedor` propia (sin datos fiscales, ver sección 11). `[ ]` alertas de
+  vencimiento automáticas. `[ ]` casos PostgreSQL de concurrencia.
+
+### Decimotercer paso: gastos operativos por sucursal (2026-09-14)
+
+- **API:** `[~]` `Gasto` (tipo fijo/variable, categoría libre, monto+moneda,
+  snapshot de tasa BCV, `anulado` en vez de borrado) y `OperacionGasto` para
+  idempotencia (migración `0044`), servicio `store/services/gastos.py`. Endpoint
+  `POST /api/store/gastos/operaciones/` con `accion` en `crear`/`anular`;
+  `GET /api/store/gastos/` lista y filtra por `sucursal_id`, `tipo` y `anulado`;
+  `GET /api/store/gastos/{id}/` trae el detalle. Si se indica `sucursal_id`, se
+  valida que pertenezca al negocio de la tienda y esté activa (mismo criterio que
+  la apertura de caja).
+- **Sin ciclo de abonos:** a diferencia de cuentas por cobrar/pagar, un gasto es
+  un registro de una sola vez; no hay `abonar`, sólo `crear`/`anular`. Anular
+  conserva el registro (auditoría), no lo borra.
+- **Comprobante adjunto:** `[ ]` deliberadamente fuera de este corte. Adjuntar
+  imagen/PDF requiere `multipart/form-data`, incompatible con el body JSON que
+  usa `confirmar_operacion`/`cancelar_operacion` para el resto del proyecto.
+  Diseñar por separado (¿subir primero y referenciar una URL en `crear`? ¿aceptar
+  el archivo fuera de la operación idempotente?) antes de implementarlo.
+- **Migración:** `[x]` `0044_gastos.py` revisada: sólo crea las dos tablas
+  nuevas, depende de `0043`, sin tocar datos ni tablas existentes. Comparación
+  estática AST en `tests/test_gastos_migration.py`, sin diferencias.
+- **Verificación local:** `[x]` `python3 -m py_compile` de todos los archivos
+  tocados y `python3 -m unittest discover -s tests -v`: 102 pruebas correctas (8
+  nuevas: 7 del servicio de gastos con dobles de ORM — incluye sucursal ajena
+  rechazada, sin tasa vigente guarda `None`, doble anulación rechazada — más 1 de
+  comparación de migración). **No se ejecutó Django, migraciones ni PostgreSQL
+  real.**
+- **Pendiente:** `[ ]` desplegar y confirmar `0044` aplicada en Railway (sin
+  acceso a Railway en esta sesión). `[~]` pantalla en TuPlazaFront implementada
+  (`Expenses.tsx`, `expensesApi.ts`, `pendingExpense.ts`; `npx tsc --noEmit` con
+  los 75 errores preexistentes, ninguno nuevo); falta prueba real en Android.
+  `[ ]` comprobante adjunto. `[ ]` reporte de utilidad neta que combine gastos con
+  ventas. `[ ]` casos PostgreSQL de concurrencia.
+
+## Conclusión ejecutiva
+
+Sí, podemos hacerlo, pero Fina Partner y TuPlaza parten de productos distintos:
+
+- **TuPlaza** ya es un marketplace con tiendas, productos/servicios, pedidos, pagos,
+  reputación, chat y delivery.
+- **Fina Partner** es principalmente el sistema operativo interno del negocio: POS,
+  inventario avanzado, caja, compras, gastos, cuentas pendientes, reportes y operación
+  offline.
+
+La estrategia recomendada es crear un **módulo opcional de gestión del negocio** para las
+tiendas. No debemos mezclar los artículos de segunda mano de usuarios comunes con el
+ERP de una tienda ni exigirles configurar una tienda para vender en el marketplace.
+
+### Lo más importante que falta
+
+1. Aislamiento formal de negocio y sucursales/almacenes.
+2. Inventario transaccional avanzado y un POS que también funcione con mala conexión.
+3. Caja, gastos, proveedores, cuentas por cobrar/pagar y libro financiero bimonetario.
+4. Usuarios internos de la tienda, permisos granulares y auditoría.
+5. Importación desde Excel/CSV para que un negocio pueda migrar sin cargar todo a mano.
+6. Funcionalidades verticales: variantes, lotes, recetas, seriales y unidades.
+7. Integraciones financieras (BNPL, Pago Móvil directo), después del núcleo. La
+   facturación fiscal SENIAT está fuera de alcance de producto (ver sección 11).
+
+## 1. Alcance del negocio y aislamiento de datos
+
+### Estado actual
+
+- `[~]` `Tienda` funciona como dueño lógico del catálogo, las órdenes, los pagos y el
+  dashboard.
+- `[~]` Un usuario puede tener rol de tienda, cliente o conductor, pero no existe todavía
+  una cuenta empresarial con varios usuarios internos y varias sucursales.
+- `[~]` Introducir una entidad `Business/Tenant` explícita. La API ya la materializa como
+  `Negocio` y cada tienda existente recibe uno mediante la migración
+  `0036_negocio_negociomiembro`; la app ya muestra el contexto del negocio cuando está
+  disponible. Inicialmente se asocia a una `Tienda`, pero conviene separar el concepto para
+  no bloquear una futura empresa con varias sucursales.
+- `[ ]` Añadir `tenant_id` a los modelos administrativos que correspondan y definir reglas
+  de aislamiento a nivel de servicio y base de datos.
+- `[ ]` Evaluar Row-Level Security (RLS) de PostgreSQL cuando el módulo sea multiempresa;
+  no conviene activarlo sin antes cerrar el modelo de pertenencia y las migraciones.
+- `[~]` Crear `Sucursal` y `Almacen`: ya existe la estructura principal en API y app, el
+  inventario se asocia al almacén principal y la app permite transferir entre almacenes;
+  faltan recepción formal, controles avanzados y operaciones por ubicación más completas.
+- `[x]` Definir qué permanece global de TuPlaza (marketplace, usuarios, delivery) y qué
+  pertenece exclusivamente al negocio (ventas internas, compras, gastos y caja).
+
+### Decisión de arquitectura
+
+La orden del marketplace (`StoreOrder`) no debería cargar por sí sola todo el futuro ERP.
+Recomendación: mantenerla para compras dentro de TuPlaza y crear una entidad de venta/caja
+que pueda recibir ventas online, presenciales y futuras ventas importadas, relacionadas con
+el negocio y la sucursal correspondiente.
+
+## 2. Catálogo de productos y servicios
+
+- `[x]` Publicación de productos y servicios con nombre, descripción, precio, moneda,
+  imágenes, stock opcional, categoría y código de barras.
+- `[x]` Categorías diferenciadas para productos/servicios y categorías marcadas como
+  comida.
+- `[x]` Productos destacados, reseñas/reputación de tienda y perfil público.
+- `[~]` Costos unitarios y margen: existe `costo_unitario` y dashboard, pero faltan compras,
+  gastos y un cálculo de utilidad neta confiable.
+- `[ ]` Importador masivo de productos, precios, existencias y clientes desde CSV/Excel,
+  con vista previa, errores por fila y reintento seguro.
+- `[ ]` Variantes con SKU propio por talla, color, modelo u otra combinación de atributos.
+- `[ ]` Listas de precios por cliente, canal, sucursal o temporada.
+- `[ ]` Unidades de medida y conversiones (unidad, caja, kilo, litro, fracción).
+- `[ ]` Matriz de compatibilidad para repuestos, ferretería u otros catálogos técnicos.
+
+## 3. Inventario
+
+- `[x]` Ajustes manuales y movimientos de stock asociados a ventas presenciales y órdenes.
+- `[x]` Consulta de movimientos y validación para evitar stock negativo en las operaciones
+  actuales.
+- `[~]` Reservas de inventario para órdenes online: existe el flujo de pedido, pero debemos
+  definir una reserva con vencimiento para evitar vender dos veces la misma existencia. Se
+  preparó un primer diseño en el commit `8082c31`, pero se revirtió tras dejar el servicio de
+  Railway en 502; falta revisar los logs de Railway y volver a desplegarlo de forma segura.
+- `[~]` Existencias por sucursal y almacén: existe el detalle transaccional, la migración del
+  stock legado, asociación automática al almacén principal y consulta protegida. La app
+  selecciona almacén en caja/ajustes y distingue el saldo local del total en “Mis productos”;
+  falta validar el flujo completo con datos reales.
+- `[~]` Transferencias entre almacenes: existe operación atómica con salida/entrada trazables
+  y pantalla de prueba; faltan recepción formal, mermas, devoluciones y conteos físicos.
+- `[ ]` Costo promedio ponderado calculado de forma transaccional.
+- `[ ]` Lotes, fechas de vencimiento, alertas y despacho FEFO para alimentos, farmacias y
+  perecederos.
+- `[ ]` Recetas/BOM para comida, con descuento atómico de ingredientes al vender un plato.
+- `[ ]` Números de serie, IMEI, garantía y trazabilidad por unidad para tecnología.
+- `[ ]` Alertas configurables de reposición, rotación baja y productos agotados.
+- `[~]` Historial consultable por almacén, origen y período, con paginación para recuperar
+  movimientos anteriores a los últimos 50. Implementado en API y app; faltan validación
+  funcional y registro completo de quién hizo cada ajuste y su motivo específico.
+
+## 4. Ventas y punto de venta (POS)
+
+- `[x]` Venta presencial básica desde `VentaPresencialCreateView`, con múltiples líneas,
+  descuento de inventario y soporte de código de barras en la app.
+- `[~]` Validación de existencias por almacén en caja: saldo por línea, validación de
+  cantidades y consulta previa al cobro implementados; falta comprobar Android y concurrencia
+  real del servicio transaccional de ventas.
+- `[x]` Pedido online con items, estado, pago reportado/confirmado y comprobante.
+- `[~]` Dashboard de tienda y separación de canal online/presencial; falta convertirlo en
+  cierre operativo de caja y reportes contables.
+- `[~]` Sesión de caja: apertura, fondo inicial, movimientos, retiros, cierre y arqueo
+  implementados en API/app por almacén, con USD/VES separados e idempotencia. Falta validación
+  funcional autenticada y concurrencia PostgreSQL.
+- `[ ]` Ticket/factura con numeración, devolución, anulación y nota de crédito.
+- `[ ]` Cotizaciones que puedan convertirse en venta sin volver a registrar los productos.
+- `[ ]` Cargos configurables: delivery, empaque, propina, comisión, descuento e impuestos.
+- `[ ]` Comandas, mesas y estados de cocina para restaurantes.
+- `[ ]` Venta omnicanal unificada: marketplace, POS, enlaces externos y venta manual.
+- `[~]` Idempotencia de ventas presenciales implementada en nueva API y Modo caja, incluida
+  recuperación tras respuesta perdida y cierre de app. `0040` aplicada; falta validar
+  concurrencia PostgreSQL/Android. Las versiones anteriores sin clave no obtienen esta garantía.
+
+## 5. Tesorería y operación bimonetaria
+
+- `[x]` Precios en USD/VES, tasa vigente y snapshot de la tasa al crear una orden.
+- `[x]` Métodos actuales de pago, reporte de pago y captura de comprobante.
+- `[~]` Wallet y pagos existen, pero no sustituyen un libro de caja ni una conciliación
+  bancaria.
+- `[ ]` Cuentas de efectivo, bancos, Pago Móvil y otras cuentas por negocio/sucursal.
+- `[ ]` Registro de cada entrada y salida con moneda original, tasa, monto normalizado y
+  referencia.
+- `[ ]` Arqueo de caja y conciliación contra saldo esperado.
+- `[ ]` Conciliación de transferencias/Pago Móvil mediante importación o webhook cuando el
+  banco lo permita.
+- `[ ]` Libro mayor/ledger con asientos inmutables y trazabilidad de origen.
+- `[~]` Diferencial cambiario realizado al momento de cobrar una cuenta emitida con otra
+  tasa. Implementado para cuentas por cobrar (`store/services/cuentas.py::registrar_abono`);
+  falta el equivalente para cuentas por pagar y un reporte consolidado. Ver el undécimo
+  paso más abajo.
+- `[ ]` Reportes de flujo de caja, ingresos, egresos, utilidad bruta y utilidad neta.
+
+La regla de diseño debe ser: nunca sobrescribir un movimiento financiero confirmado;
+cualquier corrección debe generar reverso o ajuste auditable.
+
+## 6. Compras, proveedores y cuentas pendientes
+
+- `[ ]` Proveedores con contactos y condiciones de pago (sin datos fiscales
+  obligatorios: TuPlaza es para emprendimientos no fiscalizados, ver sección 11).
+  Hoy `CuentaPorPagar` sólo guarda nombre y teléfono libres, sin entidad propia.
+- `[ ]` Orden de compra, recepción parcial/total y entrada automática al inventario.
+- `[~]` Cuentas por pagar con vencimiento, abonos, saldo y alertas: modelo,
+  migración `0043`, servicio con abonos parciales/totales y diferencial
+  cambiario (signo invertido respecto a cuentas por cobrar), API idempotente
+  (`/api/store/cuentas-pagar/`) y pantalla en TuPlazaFront (`AccountsPayable.tsx`).
+  Falta alertas de vencimiento automáticas y validación Android/PostgreSQL.
+- `[~]` Crédito comercial a clientes y cuentas por cobrar: modelo, migración `0042`,
+  servicio con abonos parciales/totales y diferencial cambiario, API idempotente
+  (`/api/store/cuentas-cobrar/`) y pantalla en TuPlazaFront (`AccountsReceivable.tsx`).
+  Falta alertas de vencimiento automáticas y validación Android/PostgreSQL.
+- `[~]` Historial de pagos parciales y estados vencido/por vencer: cada `CuentaPorCobrar`
+  guarda `estado` (pendiente/parcial/pagada/anulada) y sus `AbonoCuentaPorCobrar`
+  consultables por `GET /api/store/cuentas-cobrar/{id}/`; falta el estado "vencida"
+  automático a partir de `vencimiento` (hoy sólo se guarda la fecha, sin job que la evalúe).
+- `[ ]` Reporte de antigüedad de saldos y recordatorios configurables.
+
+## 7. Gastos y rentabilidad
+
+- `[~]` Gastos fijos y variables categorizados por negocio, sucursal y período: modelo
+  `Gasto`, migración `0044`, servicio `store/services/gastos.py`, API idempotente
+  (`/api/store/gastos/`) con filtros por sucursal, tipo y estado anulado, y pantalla
+  en TuPlazaFront (`Expenses.tsx`). Falta validación Android/PostgreSQL.
+- `[ ]` Adjuntar comprobantes de gasto (imagen/PDF), aplicando las mismas validaciones de
+  archivos ya usadas en uploads. Se dejó fuera del primer corte porque mezclar
+  `multipart/form-data` con el patrón de operación idempotente en JSON necesita
+  diseño propio (ver decimotercer paso).
+- `[ ]` Reglas para separar costo de producto, gasto operativo, delivery, comisión y otros
+  cargos.
+- `[ ]` Estado de resultados básico y margen por producto/categoría/canal.
+- `[ ]` Proyección de flujo de caja basada en ventas y compromisos pendientes.
+
+## 8. Clientes, CRM y fidelización
+
+- `[x]` Usuarios compradores, historial de pedidos, chat, reseñas y reputación.
+- `[~]` La tienda puede consultar órdenes y métricas, pero aún no tiene un CRM operacional
+  con segmentos y acciones comerciales.
+- `[ ]` Ficha de cliente para el negocio con historial de compras, frecuencia, último pedido,
+  saldo y consentimiento de comunicación.
+- `[ ]` Segmentación RFM (recencia, frecuencia y valor monetario).
+- `[ ]` Clientes frecuentes, beneficios, cupones o lista de precios.
+- `[ ]` Campañas de reactivación por canales autorizados. SMS masivo requiere proveedor,
+  consentimiento, límites y control de abuso.
+
+## 9. Usuarios internos, permisos y auditoría
+
+- `[~]` Existen roles globales de TuPlaza y permisos de propietario para varias operaciones.
+- `[ ]` Miembros internos de una tienda con invitación, activación y revocación.
+- `[ ]` Roles granulares: propietario, administrador, caja, almacén, ventas, despacho y
+  solo lectura.
+- `[ ]` Permisos por acción, sucursal y almacén.
+- `[ ]` Auditoría inmutable de cambios sensibles: precio, stock, pagos, órdenes, caja,
+  usuarios y datos fiscales.
+- `[ ]` Registro de inicio de sesión, dispositivo y eventos administrativos relevantes.
+- `[ ]` Política de retención y exportación de auditoría para el negocio.
+
+## 10. Resiliencia, offline-first e infraestructura
+
+- `[x]` API protegida, JWT, rate limits, validación de uploads y WebSockets para eventos
+  de la aplicación actual.
+- `[~]` Redis/Channels está contemplado para tiempo real, pero la reconciliación
+  offline completa no está implementada.
+- `[~]` App móvil (no PWA) con cola de ventas sin conexión: `offlineSalesQueue.ts`
+  en TuPlazaFront (2026-09-14) — múltiples ventas encoladas localmente, cada una
+  con su propia clave idempotente, sincronizadas contra el endpoint existente de
+  `ventas-presenciales/operaciones/` cuando hay señal. Decisión de producto: se
+  permite cobrar con la última existencia conocida (con aviso al cajero) en vez
+  de bloquear la venta cuando falla la consulta en vivo; un rechazo del servidor
+  por falta de stock real al sincronizar queda marcado "Requiere atención", sin
+  bloquear el resto de la cola. **No hay catálogo de productos cacheado
+  localmente todavía** — sólo resuelve la etapa de cobro de un ticket con
+  productos ya cargados en memoria, no la búsqueda/escaneo sin conexión. Ver
+  `TuPlazaFront/ROADMAP.md` Fase 2 para el detalle completo.
+- `[x]` UUID/idempotency key por venta, pago (venta presencial, caja, cuentas por
+  cobrar/pagar, gastos) y ahora también por venta encolada sin conexión. Falta
+  extenderlo a movimientos de inventario e importación masiva (no existe
+  todavía).
+- `[~]` Sincronización por lotes al recuperar conexión: implementada para ventas
+  de caja (`offlineSalesQueue.syncAll`, procesa la cola en orden y se detiene
+  ante un fallo de red real sin marcar ventas más nuevas). Sin resolución de
+  conflictos más allá de "el servidor rechaza si no hay stock real".
+- `[ ]` Bloqueos transaccionales y pruebas de concurrencia para inventario y caja.
+- `[ ]` Backups verificados, restauración probada, retención y plan de recuperación ante
+  desastre.
+- `[ ]` Monitoreo de errores, latencia, colas, WebSockets, pagos y tareas programadas.
+- `[ ]` Alertas operativas y trazas con un identificador de correlación por operación.
+- `[ ]` Almacenamiento de archivos con URLs firmadas/expiración y política de eliminación.
+
+## 11. Fiscalidad e integraciones externas
+
+**Decisión de producto (2026-09-14):** TuPlaza está dirigida a tiendas y
+emprendimientos **no fiscalizados** en Venezuela. Ningún dato fiscal (RIF, razón
+social fiscal, domicilio fiscal) debe ser obligatorio en ninguna entidad —
+`Tienda`, `Negocio`, clientes de `CuentaPorCobrar`, proveedores de
+`CuentaPorPagar`, etc. Toda la homologación SENIAT queda **fuera de alcance**,
+no sólo pospuesta: el usuario objetivo no la necesita.
+
+- `[-]` Numeración fiscal, impuestos, libros de compra/venta y retenciones —
+  fuera de alcance: el negocio objetivo no está fiscalizado.
+- `[-]` Integración con un proveedor de facturación electrónica autorizado —
+  fuera de alcance por el mismo motivo.
+- `[-]` Bridge local para impresoras fiscales — fuera de alcance.
+- `[-]` Integración BNPL/Cashea: depende de contrato, documentación, credenciales,
+  compliance y aprobación del proveedor.
+- `[-]` Integración directa con bancos/Pago Móvil: depende de disponibilidad de APIs,
+  acuerdos comerciales y requisitos de seguridad.
+
+Si el alcance de producto cambia hacia negocios fiscalizados, revisar este bloque
+antes de retomarlo — hoy no hay ninguna asesoría legal ni requisito de negocio
+que lo justifique.
+
+## 12. Analítica e inteligencia artificial
+
+- `[~]` Hay dashboard de tienda y un módulo de predicciones en backend; falta convertirlo
+  en indicadores consistentes basados en costo, gastos, inventario y caja.
+- `[ ]` Métricas operativas: ventas por período, margen, rotación, quiebres, ticket promedio,
+  clientes nuevos/recurrentes y canal.
+- `[ ]` Exportación de reportes y filtros por sucursal, categoría y moneda.
+- `[ ]` Recomendaciones de reposición y detección de baja rotación.
+- `[ ]` Asistente conversacional tipo Nina, restringido a datos del negocio y solo lectura.
+- `[ ]` Capa analítica separada del OLTP para no ejecutar consultas pesadas sobre la base
+  transaccional.
+- `[ ]` Guardrails para IA: AST/allowlist de `SELECT`, tenant obligatorio, límites de
+  tiempo/filas, réplica de solo lectura, auditoría y ausencia de datos sensibles en el
+  prompt.
+- `[-]` Scoring crediticio o préstamos: no es requisito del MVP y tiene implicaciones
+  financieras, de privacidad y regulatorias.
+
+## 13. Modelo de datos sugerido
+
+Estas entidades representan una dirección, no una orden para crear todas las tablas de una
+vez:
+
+```text
+Business/Tenant
+  ├─ Sucursal
+  │   └─ Almacen
+  ├─ BusinessMember / Role / Permission
+  ├─ Product / ProductVariant / Category
+  │   ├─ InventoryBalance
+  │   ├─ InventoryLot
+  │   └─ Recipe/BOM
+  ├─ Sale / SaleItem / Quote
+  ├─ CashSession / CashMovement
+  ├─ FinancialAccount / LedgerEntry / ExchangeRateSnapshot
+  ├─ Supplier / Purchase / Payable
+  ├─ CustomerProfile / Receivable
+  ├─ Expense
+  ├─ ImportJob / IdempotencyKey
+  └─ AuditEvent
+```
+
+Reglas importantes:
+
+- `StoreOrder` puede seguir representando una orden del marketplace; la venta consolidada
+  debe permitir otras fuentes sin duplicar lógica.
+- Todo registro administrativo debe poder responder: **a qué negocio, sucursal, almacén,
+  usuario y operación pertenece**.
+- Los importes deben guardar moneda original, tasa aplicada y monto normalizado cuando
+  corresponda.
+- Los cambios de estado de ventas, pagos, inventario y caja deben tener transiciones
+  explícitas; no permitir que un recurso completado vuelva a un estado anterior.
+
+## Roadmap recomendado
+
+### Fase 0 — Fundaciones y decisiones
+
+- `[x]` Confirmar que el objetivo es un módulo SaaS opcional para tiendas, no convertir a
+  todos los usuarios del marketplace en empresas.
+- `[~]` Definir `Business/Tenant`, membresías, sucursales y almacenes. Ya existen en API y
+  app `Negocio`, `NegocioMiembro`, existencias por almacén y transferencias básicas; faltan
+  controles operativos avanzados.
+- `[x]` Definir la separación entre `StoreOrder`, `Sale`, delivery y artículos C2C.
+- `[ ]` Especificar invariantes: no stock negativo, no doble cobro, no retroceso de estados,
+  auditoría y permisos.
+
+### Fase 1 — Núcleo operativo MVP
+
+- `[ ]` Catálogo con variantes e importación CSV/Excel; las existencias por almacén ya tienen
+  una base inicial, pero falta completar su operación.
+- `[ ]` Venta/POS online y presencial unificada.
+- `[ ]` Caja con apertura, cierre, arqueo y comprobante básico.
+- `[ ]` Reservas de stock, devoluciones y movimientos auditables.
+- `[ ]` Dashboard de ventas, stock y margen bruto.
+
+### Fase 2 — Finanzas y resiliencia
+
+- `[~]` Gastos, proveedores, compras, cuentas por cobrar/pagar. Cuentas por cobrar,
+  por pagar y gastos iniciados (undécimo, duodécimo y decimotercer paso); falta
+  entidad `Proveedor` propia y compras.
+- `[~]` Ledger bimonetario y diferencial cambiario. Diferencial cambiario realizado
+  por abono implementado para cuentas por cobrar; falta libro mayor consolidado.
+- `[ ]` Conciliación de caja y bancos.
+- `[~]` Offline-first, cola idempotente y sincronización. Cola de ventas sin
+  conexión en Modo caja implementada (ver sección 10); falta catálogo de
+  productos cacheado para búsqueda/escaneo sin señal.
+- `[ ]` Backups, monitoreo y pruebas de concurrencia.
+
+### Fase 3 — Verticales de alto valor
+
+- `[ ]` Comida: recetas/BOM, insumos, mermas y comandas.
+- `[ ]` Moda: tallas, colores y variantes.
+- `[ ]` Farmacia/alimentos: lotes, vencimientos y FEFO.
+- `[ ]` Tecnología: seriales, IMEI y garantías.
+- `[ ]` Repuestos/ferretería: unidades y compatibilidad.
+
+### Fase 4 — Ecosistema
+
+- `[ ]` CRM, segmentos, fidelización y campañas con consentimiento.
+- `[-]` Facturación fiscal/electrónica — fuera de alcance de producto (ver sección 11).
+- `[ ]` Integraciones bancarias o BNPL con acuerdos firmados.
+- `[ ]` IA analítica de solo lectura después de tener datos financieros confiables.
+
+## Criterio de terminado por módulo
+
+Antes de declarar una capacidad lista para negocios reales, comprobar:
+
+- `[ ]` Migración reversible o plan de migración documentado.
+- `[ ]` Endpoints REST/GraphQL documentados y contratos de error claros.
+- `[ ]` Autorización por negocio, sucursal, rol y propietario del recurso.
+- `[ ]` Transacción atómica e idempotencia donde haya dinero, stock o estados.
+- `[ ]` Auditoría de cambios sensibles.
+- `[ ]` Pruebas de éxito, permisos, concurrencia, reintentos y datos incompletos.
+- `[ ]` Estado visible en la app y sincronización WebSocket cuando corresponda.
+- `[ ]` Métricas y logs sin exponer datos personales o credenciales.
+- `[ ]` Manual corto para el negocio y procedimiento de recuperación.
+
+## Orden de implementación sugerido para TuPlaza
+
+El primer entregable no debería ser IA ni Cashea. La secuencia con mejor relación valor/riesgo
+es:
+
+1. `Business/Tenant` + miembros/permisos + sucursal/almacén.
+2. Reservas y movimientos de inventario por almacén.
+3. Venta/POS idempotente y sesión de caja.
+4. Cuentas por cobrar y por pagar con diferencial cambiario realizado — `[~]`
+   ambas iniciadas (undécimo y duodécimo paso); falta entidad `Proveedor` propia,
+   alertas de vencimiento y validación PostgreSQL.
+5. Gastos — `[~]` iniciado (decimotercer paso), falta comprobante adjunto y
+   reporte de utilidad neta. Compras y reportes de margen siguen pendientes.
+6. Ledger bimonetario consolidado (hoy el diferencial vive por abono, sin libro mayor)
+   y conciliación de caja/bancos.
+7. Offline-first — `[~]` cola de ventas sin conexión iniciada en TuPlazaFront
+   (2026-09-14); falta catálogo de productos cacheado localmente. Verticales
+   según los primeros negocios reales.
+8. Integraciones externas e IA con los datos ya confiables.
+
+Así TuPlaza puede ofrecer a una tienda control real de su operación sin perder el marketplace,
+el delivery ni el flujo simplificado para usuarios que sólo venden artículos ocasionalmente.
