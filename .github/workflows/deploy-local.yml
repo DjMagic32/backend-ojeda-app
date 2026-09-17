@@ -1,0 +1,18 @@
+name: Deploy local
+
+on:
+  push:
+    branches:
+      - dev
+
+concurrency:
+  group: deploy-local-dev
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # Este runner debe estar instalado en la Mac que ejecuta Docker.
+    runs-on: [self-hosted, macOS, ojeda]
+    steps:
+      - name: Actualizar repositorio, Docker y migraciones
+        run: /Users/davidgarcia/Documents/work/projet-ojeda/backend-ojeda-app/scripts/deploy_local.sh

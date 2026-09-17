@@ -109,12 +109,36 @@ Este `README.md` proporciona una guía completa para arrancar el proyecto desde 
 
 ## Configuración mínima de producción
 
-En Railway configura estas variables antes de desplegar:
+### Despliegue automático en la Mac mediante GitHub Actions
+
+Producción corre en la Mac mediante `docker-compose.production.yml`. El workflow
+`.github/workflows/deploy-local.yml` se dispara al hacer push a `dev` y usa un
+runner de GitHub instalado en esta misma máquina. El script de despliegue hace
+`fetch`/`fast-forward`, reconstruye Docker y comprueba las migraciones.
+
+El despliegue nunca ejecuta `docker compose down --volumes` ni elimina el
+volumen `postgres_data`. Las migraciones se aplican desde `start.sh` y luego se
+verifican con `migrate --check`.
+
+Para activar el workflow una sola vez:
+
+1. En GitHub: `Settings > Actions > Runners > New self-hosted runner`.
+2. Seleccionar macOS y ejecutar en la Mac los comandos de instalación que
+   GitHub proporciona.
+3. Añadir la etiqueta personalizada `ojeda` y dejar el runner ejecutándose.
+4. Asegurarse de que el usuario del runner tenga acceso a Docker Desktop y al
+   checkout indicado en `scripts/deploy_local.sh`.
+
+Después, cada push a `dev` actualizará esta Mac automáticamente. Si el runner
+está detenido, GitHub conservará el job pendiente hasta que vuelva a estar
+disponible.
+
+En la Mac configura estas variables en `.env.production` antes de desplegar:
 
 ```env
 DJANGO_DEBUG=False
 DJANGO_SECRET_KEY=<clave-larga-aleatoria-y-privada>
-DJANGO_ALLOWED_HOSTS=<dominio-publico-de-railway>
+DJANGO_ALLOWED_HOSTS=<dominio-publico>
 DJANGO_SERVE_API_DOCS=False
 DJANGO_SECURE_SSL_REDIRECT=True
 REDIS_URL=<url-del-servicio-redis>
