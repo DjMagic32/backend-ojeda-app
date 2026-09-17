@@ -120,6 +120,13 @@ El despliegue nunca ejecuta `docker compose down --volumes` ni elimina el
 volumen `postgres_data`. Las migraciones se aplican desde `start.sh` y luego se
 verifican con `migrate --check`.
 
+La producción local también incluye Redis para WebSockets (Django Channels),
+caché y límites de solicitudes. Su volumen es `redis_data`. Las imágenes y
+archivos adjuntos pueden mantenerse en la carpeta persistente `./media` o
+configurarse en un bucket compatible con S3/R2 usando las variables de
+`.env.production.example`. Para enviar correos hay que configurar `RESEND_API_KEY`
+o las variables SMTP; sin ellas Django solo los imprime en los logs.
+
 Para activar el workflow una sola vez:
 
 1. En GitHub: `Settings > Actions > Runners > New self-hosted runner`.

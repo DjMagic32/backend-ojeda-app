@@ -10,6 +10,7 @@ services:
       DJANGO_DB_ENGINE: postgresql
       POSTGRES_HOST: db
       POSTGRES_PORT: "5432"
+      REDIS_URL: redis://redis:6379/0
     expose:
       - "8000"
     volumes:
@@ -17,6 +18,8 @@ services:
       - ./media:/code/media
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     restart: unless-stopped
 
@@ -28,6 +31,18 @@ services:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -53,5 +68,6 @@ services:
 
 volumes:
   postgres_data:
+  redis_data:
   caddy_data:
   caddy_config:
